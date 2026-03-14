@@ -74,7 +74,13 @@ target_include_directories(rexcore PRIVATE
 )
 
 if(UNIX)
-    target_link_libraries(rexcore PRIVATE pthread rt dl)
+    find_package(Threads REQUIRED)
+    target_link_libraries(rexcore PRIVATE Threads::Threads)
+    if(APPLE)
+        target_link_libraries(rexcore PRIVATE "-framework CoreServices")
+    else()
+        target_link_libraries(rexcore PRIVATE rt dl)
+    endif()
 endif()
 
 target_link_libraries(rexcore

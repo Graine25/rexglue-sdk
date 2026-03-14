@@ -16,9 +16,19 @@ static_assert(REX_PLATFORM_LINUX || REX_PLATFORM_MAC, "This file is POSIX-only")
 
 namespace rex::chrono {
 
+namespace {
+
+#if REX_PLATFORM_MACOS
+constexpr clockid_t kMonotonicClockId = CLOCK_MONOTONIC;
+#else
+constexpr clockid_t kMonotonicClockId = CLOCK_MONOTONIC_RAW;
+#endif
+
+}  // namespace
+
 uint64_t Clock::host_tick_frequency_platform() {
   timespec res;
-  int error = clock_getres(CLOCK_MONOTONIC_RAW, &res);
+  int error = clock_getres(kMonotonicClockId, &res);
   assert_zero(error);
   assert_zero(res.tv_sec);  // Sub second resolution is required.
 
@@ -28,7 +38,7 @@ uint64_t Clock::host_tick_frequency_platform() {
 
 uint64_t Clock::host_tick_count_platform() {
   timespec tp;
-  int error = clock_gettime(CLOCK_MONOTONIC_RAW, &tp);
+  int error = clock_gettime(kMonotonicClockId, &tp);
   assert_zero(error);
 
   return tp.tv_nsec + tp.tv_sec * 1000000000ull;
