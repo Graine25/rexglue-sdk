@@ -61,6 +61,8 @@ if(WIN32)
         window_win.cpp
         windowed_app_context_win.cpp
     )
+elseif(APPLE)
+    set(REXUI_PLATFORM_SOURCES)
 else()
     set(REXUI_PLATFORM_SOURCES
         surface_gnulinux.cpp
@@ -136,6 +138,8 @@ if(WIN32)
         dwmapi
         Shcore
     )
+elseif(APPLE)
+    # Compile-only Phase 1 path. Native macOS window integration is added later.
 else()
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(GTK3 REQUIRED gtk+-3.0)
@@ -158,5 +162,3 @@ if(REXGLUE_USE_D3D12)
         dxc-headers
     )
 endif()
-
-
