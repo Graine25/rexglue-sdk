@@ -114,6 +114,21 @@ using XSystemClock = detail::NtSystemClock<detail::Domain::Guest>;
 }  // namespace chrono
 }  // namespace rex
 
+#if defined(_LIBCPP_VERSION)
+namespace std::chrono {
+
+template <class DestClock, class SourceClock>
+struct clock_time_conversion;
+
+template <class DestClock, class SourceClock, class Duration>
+auto clock_cast(const time_point<SourceClock, Duration>& t)
+    -> decltype(clock_time_conversion<DestClock, SourceClock>{}(t)) {
+  return clock_time_conversion<DestClock, SourceClock>{}(t);
+}
+
+}  // namespace std::chrono
+#endif
+
 namespace std::chrono {
 
 template <>
