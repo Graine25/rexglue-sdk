@@ -23,7 +23,15 @@
 #include <rex/math.h>
 #include <rex/platform.h>
 
+#if REX_PLATFORM_MAC && !defined(_XOPEN_SOURCE)
+#define REX_RESTORE_XOPEN_SOURCE 1
+#define _XOPEN_SOURCE 700
+#endif
 #include <ucontext.h>
+#if defined(REX_RESTORE_XOPEN_SOURCE)
+#undef _XOPEN_SOURCE
+#undef REX_RESTORE_XOPEN_SOURCE
+#endif
 
 namespace rex::arch {
 
@@ -42,7 +50,11 @@ std::pair<ExceptionHandler::Handler, void*> handlers_[kMaxHandlerCount];
 
 static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
                                      void* signal_context) {
+#if REX_PLATFORM_MACOS && REX_ARCH_ARM64
+  mcontext_t mcontext = reinterpret_cast<ucontext_t*>(signal_context)->uc_mcontext;
+#else
   mcontext_t& mcontext = reinterpret_cast<ucontext_t*>(signal_context)->uc_mcontext;
+#endif
 
   HostThreadContext thread_context;
 
@@ -70,6 +82,17 @@ static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
   std::memcpy(thread_context.xmm_registers, mcontext.fpregs->_xmm,
               sizeof(thread_context.xmm_registers));
 #elif REX_ARCH_ARM64
+#if REX_PLATFORM_MACOS
+  std::memcpy(thread_context.x, mcontext->__ss.__x, sizeof(thread_context.x[0]) * 29);
+  thread_context.x[29] = mcontext->__ss.__fp;
+  thread_context.x[30] = mcontext->__ss.__lr;
+  thread_context.sp = mcontext->__ss.__sp;
+  thread_context.pc = mcontext->__ss.__pc;
+  thread_context.pstate = mcontext->__ss.__cpsr;
+  thread_context.fpsr = mcontext->__ns.__fpsr;
+  thread_context.fpcr = mcontext->__ns.__fpcr;
+  std::memcpy(thread_context.v, mcontext->__ns.__v, sizeof(thread_context.v));
+#else
   std::memcpy(thread_context.x, mcontext.regs, sizeof(thread_context.x));
   thread_context.sp = mcontext.sp;
   thread_context.pc = mcontext.pc;
@@ -98,6 +121,7 @@ static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
     thread_context.fpcr = mcontext_fpsimd->fpcr;
     std::memcpy(thread_context.v, mcontext_fpsimd->vregs, sizeof(thread_context.v));
   }
+#endif
 #endif  // REX_ARCH
 
   Exception ex;
@@ -114,6 +138,17 @@ static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
                                        ? Exception::AccessViolationOperation::kWrite
                                        : Exception::AccessViolationOperation::kRead;
 #elif REX_ARCH_ARM64
+#if REX_PLATFORM_MACOS
+      bool instruction_is_store;
+      if (IsArm64LoadPrefetchStore(*reinterpret_cast<const uint32_t*>(thread_context.pc),
+                                   instruction_is_store)) {
+        access_violation_operation = instruction_is_store
+                                         ? Exception::AccessViolationOperation::kWrite
+                                         : Exception::AccessViolationOperation::kRead;
+      } else {
+        access_violation_operation = Exception::AccessViolationOperation::kUnknown;
+      }
+#else
       // For a Data Abort (EC - ESR_EL1 bits 31:26 - 0b100100 from a lower
       // Exception Level, 0b100101 without a change in the Exception Level),
       // bit 6 is 0 for reading from a memory location, 1 for writing to a
@@ -145,6 +180,7 @@ static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
           access_violation_operation = Exception::AccessViolationOperation::kUnknown;
         }
       }
+#endif
 #else
       access_violation_operation = Exception::AccessViolationOperation::kUnknown;
 #endif  // REX_ARCH
@@ -185,21 +221,44 @@ static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
       uint32_t modified_x_registers_remaining = ex.modified_x_registers();
       while (rex::bit_scan_forward(modified_x_registers_remaining, &modified_register_index)) {
         modified_x_registers_remaining &= ~(UINT32_C(1) << modified_register_index);
+#if REX_PLATFORM_MACOS
+        if (modified_register_index < 29) {
+          mcontext->__ss.__x[modified_register_index] = thread_context.x[modified_register_index];
+        } else if (modified_register_index == 29) {
+          mcontext->__ss.__fp = thread_context.x[modified_register_index];
+        } else {
+          mcontext->__ss.__lr = thread_context.x[modified_register_index];
+        }
+#else
         mcontext.regs[modified_register_index] = thread_context.x[modified_register_index];
+#endif
       }
+#if REX_PLATFORM_MACOS
+      mcontext->__ss.__sp = thread_context.sp;
+      mcontext->__ss.__pc = thread_context.pc;
+      mcontext->__ss.__cpsr = uint32_t(thread_context.pstate);
+      mcontext->__ns.__fpsr = thread_context.fpsr;
+      mcontext->__ns.__fpcr = thread_context.fpcr;
+#else
       mcontext.sp = thread_context.sp;
       mcontext.pc = thread_context.pc;
       mcontext.pstate = thread_context.pstate;
       if (mcontext_fpsimd) {
         mcontext_fpsimd->fpsr = thread_context.fpsr;
         mcontext_fpsimd->fpcr = thread_context.fpcr;
-        uint32_t modified_v_registers_remaining = ex.modified_v_registers();
-        while (rex::bit_scan_forward(modified_v_registers_remaining, &modified_register_index)) {
-          modified_v_registers_remaining &= ~(UINT32_C(1) << modified_register_index);
-          std::memcpy(&mcontext_fpsimd->vregs[modified_register_index],
-                      &thread_context.v[modified_register_index], sizeof(vec128_t));
-          mcontext.regs[modified_register_index] = thread_context.x[modified_register_index];
-        }
+      }
+#endif
+      uint32_t modified_v_registers_remaining = ex.modified_v_registers();
+      while (rex::bit_scan_forward(modified_v_registers_remaining, &modified_register_index)) {
+        modified_v_registers_remaining &= ~(UINT32_C(1) << modified_register_index);
+#if REX_PLATFORM_MACOS
+        std::memcpy(&mcontext->__ns.__v[modified_register_index],
+                    &thread_context.v[modified_register_index], sizeof(vec128_t));
+#else
+        std::memcpy(&mcontext_fpsimd->vregs[modified_register_index],
+                    &thread_context.v[modified_register_index], sizeof(vec128_t));
+        mcontext.regs[modified_register_index] = thread_context.x[modified_register_index];
+#endif
       }
 #endif  // REX_ARCH
       return;
