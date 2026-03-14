@@ -15,7 +15,6 @@
 #include <rex/thread/fiber.h>
 
 #include <cassert>
-#include <ucontext.h>
 
 namespace rex::thread {
 

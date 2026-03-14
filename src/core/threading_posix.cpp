@@ -22,9 +22,15 @@ static_assert(REX_PLATFORM_LINUX || REX_PLATFORM_MAC, "This file is POSIX-only")
 #include <limits>
 #include <memory>
 
+#if REX_PLATFORM_MACOS
+#include <mach/mach.h>
+#include <mach/semaphore.h>
+#endif
 #include <pthread.h>
 #include <semaphore.h>
+#if REX_PLATFORM_LINUX
 #include <sys/eventfd.h>
+#endif
 #include <sys/syscall.h>
 #include <sys/time.h>
 #include <sys/types.h>
@@ -58,6 +64,87 @@ static_assert(REX_PLATFORM_LINUX || REX_PLATFORM_MAC, "This file is POSIX-only")
 #endif
 
 namespace rex::thread {
+
+namespace {
+
+#if REX_PLATFORM_MACOS
+using SuspendSemaphore = semaphore_t;
+
+bool SuspendSemaphoreInitialize(SuspendSemaphore& semaphore) {
+  return semaphore_create(mach_task_self(), &semaphore, SYNC_POLICY_FIFO, 0) == KERN_SUCCESS;
+}
+
+void SuspendSemaphoreDestroy(SuspendSemaphore& semaphore) {
+  if (semaphore == MACH_PORT_NULL) {
+    return;
+  }
+  assert_true(semaphore_destroy(mach_task_self(), semaphore) == KERN_SUCCESS);
+  semaphore = MACH_PORT_NULL;
+}
+
+void SuspendSemaphorePost(SuspendSemaphore& semaphore) {
+  static_cast<void>(semaphore);
+  assert_true(semaphore_signal(semaphore) == KERN_SUCCESS);
+}
+
+void SuspendSemaphoreWait(SuspendSemaphore& semaphore) {
+  while (true) {
+    kern_return_t result = semaphore_wait(semaphore);
+    if (result == KERN_SUCCESS) {
+      return;
+    }
+    if (result != KERN_ABORTED) {
+      assert_always();
+      return;
+    }
+  }
+}
+
+uint32_t CurrentThreadSystemId() {
+  uint64_t thread_id = 0;
+  assert_zero(pthread_threadid_np(nullptr, &thread_id));
+  return static_cast<uint32_t>(thread_id);
+}
+
+int SetPThreadName(pthread_t thread, const std::string& name) {
+  if (!pthread_equal(thread, pthread_self())) {
+    return 0;
+  }
+  return pthread_setname_np(name.c_str());
+}
+#else
+using SuspendSemaphore = sem_t;
+
+bool SuspendSemaphoreInitialize(SuspendSemaphore& semaphore) {
+  return sem_init(&semaphore, 0, 0) == 0;
+}
+
+void SuspendSemaphoreDestroy(SuspendSemaphore& semaphore) {
+  assert_zero(sem_destroy(&semaphore));
+}
+
+void SuspendSemaphorePost(SuspendSemaphore& semaphore) {
+  assert_zero(sem_post(&semaphore));
+}
+
+void SuspendSemaphoreWait(SuspendSemaphore& semaphore) {
+  int result;
+  do {
+    result = sem_wait(&semaphore);
+  } while (result == -1 && errno == EINTR);
+  assert_zero(result);
+}
+
+uint32_t CurrentThreadSystemId() {
+  return static_cast<uint32_t>(syscall(SYS_gettid));
+}
+
+int SetPThreadName(pthread_t thread, const std::string& name) {
+  return pthread_setname_np(thread, name.c_str());
+}
+#endif
+
+}  // namespace
 
 #if REX_PLATFORM_ANDROID
 // May be null if no dynamically loaded functions are required.
@@ -110,13 +197,33 @@ enum class SignalType {
 };
 
 int GetSystemSignal(SignalType num) {
+#if REX_PLATFORM_MACOS
+  static constexpr int kMacSignals[] = {
+      SIGUSR1,
+      SIGUSR2,
+  };
+  return kMacSignals[static_cast<size_t>(num)];
+#else
   auto result = SIGRTMIN + static_cast<int>(num);
   assert_true(result < SIGRTMAX);
   return result;
+#endif
 }
 
 SignalType GetSystemSignalType(int num) {
+#if REX_PLATFORM_MACOS
+  switch (num) {
+    case SIGUSR1:
+      return SignalType::kThreadSuspend;
+    case SIGUSR2:
+      return SignalType::kThreadUserCallback;
+    default:
+      assert_always();
+      return SignalType::kThreadSuspend;
+  }
+#else
   return static_cast<SignalType>(num - SIGRTMIN);
+#endif
 }
 
 std::array<std::atomic<bool>, static_cast<size_t>(SignalType::k_Count)> signal_handler_installed =
@@ -145,7 +252,7 @@ void EnableAffinityConfiguration() {}
 // uint64_t ticks() { return mach_absolute_time(); }
 
 uint32_t current_thread_system_id() {
-  return static_cast<uint32_t>(syscall(SYS_gettid));
+  return CurrentThreadSystemId();
 }
 
 void MaybeYield() {
@@ -583,7 +690,7 @@ class PosixCondition<Thread> : public PosixConditionBase {
         exit_code_(0),
         state_(State::kUninitialized),
         suspend_count_(0) {
-    sem_init(&suspend_sem_, 0, 0);
+    assert_true(SuspendSemaphoreInitialize(suspend_sem_));
 #if REX_PLATFORM_ANDROID
     android_pre_api_26_name_[0] = '\0';
 #endif
@@ -625,7 +732,7 @@ class PosixCondition<Thread> : public PosixConditionBase {
         exit_code_(0),
         state_(State::kRunning),
         suspend_count_(0) {
-    sem_init(&suspend_sem_, 0, 0);
+    assert_true(SuspendSemaphoreInitialize(suspend_sem_));
 #if REX_PLATFORM_ANDROID
     android_pre_api_26_name_[0] = '\0';
 #endif
@@ -669,7 +776,7 @@ class PosixCondition<Thread> : public PosixConditionBase {
     WaitStarted();
     std::unique_lock<std::mutex> lock(state_mutex_);
     if (state_ != State::kUninitialized && state_ != State::kFinished) {
-      pthread_setname_np(thread_, std::string(name).c_str());
+      assert_zero(SetPThreadName(thread_, name));
 #if REX_PLATFORM_ANDROID
       SetAndroidPreApi26Name(name);
 #endif
@@ -687,10 +794,20 @@ class PosixCondition<Thread> : public PosixConditionBase {
   }
 #endif
 
-  uint32_t system_id() const { return static_cast<uint32_t>(thread_); }
+  uint32_t system_id() const {
+#if REX_PLATFORM_MACOS
+    return static_cast<uint32_t>(pthread_mach_thread_np(thread_));
+#else
+    return static_cast<uint32_t>(thread_);
+#endif
+  }
 
   uint64_t affinity_mask() {
     WaitStarted();
+#if REX_PLATFORM_MACOS
+    REXSYS_WARN("Thread affinity queries are not implemented on macOS");
+    return 0;
+#else
     cpu_set_t cpu_set;
 #if REX_PLATFORM_ANDROID
     if (sched_getaffinity(pthread_gettid_np(thread_), sizeof(cpu_set_t), &cpu_set) != 0) {
@@ -708,10 +825,15 @@ class PosixCondition<Thread> : public PosixConditionBase {
       result |= set << i;
     }
     return result;
+#endif
   }
 
   void set_affinity_mask(uint64_t mask) {
     WaitStarted();
+#if REX_PLATFORM_MACOS
+    static_cast<void>(mask);
+    REXSYS_WARN("Thread affinity is not implemented on macOS");
+#else
     cpu_set_t cpu_set;
     CPU_ZERO(&cpu_set);
     for (auto i = 0u; i < 64; i++) {
@@ -727,6 +849,7 @@ class PosixCondition<Thread> : public PosixConditionBase {
     if (pthread_setaffinity_np(thread_, sizeof(cpu_set_t), &cpu_set) != 0) {
       assert_always();
     }
+#endif
 #endif
   }
 
@@ -779,12 +902,16 @@ class PosixCondition<Thread> : public PosixConditionBase {
       return;
     }
 
+#if REX_PLATFORM_ANDROID
     sigval value{};
     value.sival_ptr = this;
-#if REX_PLATFORM_ANDROID
     int result = sigqueue(pthread_gettid_np(thread_),
                           GetSystemSignal(SignalType::kThreadUserCallback), value);
+#elif REX_PLATFORM_MACOS
+    int result = pthread_kill(thread_, GetSystemSignal(SignalType::kThreadUserCallback));
 #else
+    sigval value{};
+    value.sival_ptr = this;
     int result = pthread_sigqueue(thread_, GetSystemSignal(SignalType::kThreadUserCallback), value);
 #endif
     if (result != 0) {
@@ -830,7 +957,7 @@ class PosixCondition<Thread> : public PosixConditionBase {
     if (suspend_count_ == 0 && state_ == State::kSuspended) {
       state_ = State::kRunning;
       // Async-signal-safe wakeup for WaitSuspended() from signal handler path.
-      sem_post(&suspend_sem_);
+      SuspendSemaphorePost(suspend_sem_);
     }
     state_signal_.notify_all();
     return true;
@@ -907,10 +1034,7 @@ class PosixCondition<Thread> : public PosixConditionBase {
 
   /// Uses sem_wait because it may be called from signal handler context.
   void WaitSuspended() {
-    int ret;
-    do {
-      ret = sem_wait(&suspend_sem_);
-    } while (ret == -1 && errno == EINTR);
+    SuspendSemaphoreWait(suspend_sem_);
   }
 
   void* native_handle() const override { return reinterpret_cast<void*>(thread_); }
@@ -922,14 +1046,14 @@ class PosixCondition<Thread> : public PosixConditionBase {
     if (thread_) {
       pthread_join(thread_, nullptr);
     }
-    sem_destroy(&suspend_sem_);
+    SuspendSemaphoreDestroy(suspend_sem_);
   }
   pthread_t thread_;
   bool signaled_;
   int exit_code_;
   State state_;             // Protected by state_mutex_
   uint32_t suspend_count_;  // Protected by state_mutex_
-  sem_t suspend_sem_;
+  SuspendSemaphore suspend_sem_;
   mutable std::mutex state_mutex_;
   mutable std::mutex callback_mutex_;
   mutable std::condition_variable state_signal_;
@@ -1394,7 +1518,12 @@ void Thread::Exit(int exit_code) {
 }
 
 void set_current_thread_name(const std::string_view name) {
-  pthread_setname_np(pthread_self(), std::string(name).c_str());
+  std::string name_string(name);
+#if REX_PLATFORM_MACOS
+  assert_zero(pthread_setname_np(name_string.c_str()));
+#else
+  assert_zero(pthread_setname_np(pthread_self(), name_string.c_str()));
+#endif
 #if REX_PLATFORM_ANDROID
   if (!android_pthread_getname_np_ && current_thread_) {
     current_thread_->condition().SetAndroidPreApi26Name(name);
