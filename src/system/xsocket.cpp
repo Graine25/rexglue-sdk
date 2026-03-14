@@ -29,6 +29,22 @@
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <sys/socket.h>
+
+#ifdef AF_INET
+#undef AF_INET
+#endif
+#ifdef SOCK_STREAM
+#undef SOCK_STREAM
+#endif
+#ifdef SOCK_DGRAM
+#undef SOCK_DGRAM
+#endif
+#ifdef IPPROTO_TCP
+#undef IPPROTO_TCP
+#endif
+#ifdef IPPROTO_UDP
+#undef IPPROTO_UDP
+#endif
 #endif
 
 namespace rex::system {

@@ -23,9 +23,21 @@
 
 namespace rex::filesystem {
 
+#if REX_PLATFORM_MACOS
+extern "C" time_t timegm(struct tm*);
+#endif
+
 // Import kernel content types for STFS structures
 using rex::system::XContentType;
 using rex::system::XLanguage;
+
+inline time_t timegm_utc(struct tm* tm) {
+#if REX_PLATFORM_WIN32
+  return _mkgmtime(tm);
+#else
+  return timegm(tm);
+#endif
+}
 
 // Convert FAT timestamp to 100-nanosecond intervals since January 1, 1601 (UTC)
 inline uint64_t decode_fat_timestamp(const uint32_t date, const uint32_t time) {
@@ -39,11 +51,7 @@ inline uint64_t decode_fat_timestamp(const uint32_t date, const uint32_t time) {
   tm.tm_sec = (0x001F & time) << 1;  // the value stored in 2-seconds intervals
   tm.tm_isdst = 0;
 
-#if REX_PLATFORM_WIN32
-  time_t timet = _mkgmtime(&tm);
-#else
-  time_t timet = timegm(&tm);
-#endif
+  time_t timet = timegm_utc(&tm);
 
   if (timet == -1) {
     return 0;
