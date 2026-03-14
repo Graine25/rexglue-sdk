@@ -26,6 +26,10 @@
 #include <rex/platform.h>
 #include <rex/string.h>
 
+#if REX_PLATFORM_MACOS && !defined(MAP_ANON)
+#define MAP_ANON 0x1000
+#endif
+
 #if REX_PLATFORM_ANDROID
 #include <string.h>
 
@@ -82,7 +86,7 @@ void AndroidShutdown() {
 #endif
 
 size_t page_size() {
-  return getpagesize();
+  return static_cast<size_t>(sysconf(_SC_PAGESIZE));
 }
 size_t allocation_granularity() {
   return page_size();
@@ -223,7 +227,12 @@ void* AllocFixed(void* base_address, size_t length, AllocationType allocation_ty
   }
 
   // Build flags - always use MAP_FIXED_NOREPLACE for fixed addresses
-  int flags = MAP_PRIVATE | MAP_ANONYMOUS;
+  int flags = MAP_PRIVATE;
+#if REX_PLATFORM_MACOS
+  flags |= MAP_ANON;
+#else
+  flags |= MAP_ANONYMOUS;
+#endif
 #if defined(MAP_FIXED_NOREPLACE)
   if (base_address) {
     flags |= MAP_FIXED_NOREPLACE;
@@ -372,7 +381,7 @@ FileMappingHandle CreateFileMappingHandle(const std::filesystem::path& path, siz
   if (ret < 0) {
     return kFileMappingHandleInvalid;
   }
-  if (ftruncate64(ret, static_cast<off_t>(length)) != 0) {
+  if (ftruncate(ret, static_cast<off_t>(length)) != 0) {
     close(ret);
     shm_unlink(full_path.c_str());
     return kFileMappingHandleInvalid;
@@ -407,8 +416,8 @@ void* MapFileView(FileMappingHandle handle, void* base_address, size_t length, P
   }
 
   uint32_t prot = ToPosixProtectFlags(access);
-  void* result = mmap64(base_address, length, prot, flags, static_cast<int>(handle),
-                        static_cast<off_t>(file_offset));
+  void* result = mmap(base_address, length, prot, flags, static_cast<int>(handle),
+                      static_cast<off_t>(file_offset));
   if (result == MAP_FAILED) {
     return nullptr;
   }
