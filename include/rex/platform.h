@@ -47,6 +47,9 @@
 #ifndef REX_PLATFORM_MAC
 #define REX_PLATFORM_MAC 0
 #endif
+#ifndef REX_PLATFORM_MACOS
+#define REX_PLATFORM_MACOS REX_PLATFORM_MAC
+#endif
 #ifndef REX_PLATFORM_WIN32
 #define REX_PLATFORM_WIN32 0
 #endif
@@ -121,6 +124,17 @@
 #endif
 
 namespace rex {
+
+#if REX_PLATFORM_MAC
+constexpr const char* kPlatformName = "macOS";
+constexpr const char* kDefaultGraphicsLibrary = "libMoltenVK.dylib";
+#elif REX_PLATFORM_WIN32
+constexpr const char* kPlatformName = "Windows";
+constexpr const char* kDefaultGraphicsLibrary = "vulkan-1.dll";
+#else
+constexpr const char* kPlatformName = "Linux";
+constexpr const char* kDefaultGraphicsLibrary = "libvulkan.so.1";
+#endif
 
 #if REX_PLATFORM_WIN32
 const char kPathSeparator = '\\';
