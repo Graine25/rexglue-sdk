@@ -138,6 +138,25 @@ std::string generate_cmake_presets() {
   content += "            }\n";
   content += "        },\n";
   content += "        {\n";
+  content += "            \"name\": \"mac-arm64-base\",\n";
+  content += "            \"hidden\": true,\n";
+  content += "            \"generator\": \"Ninja\",\n";
+  content += "            \"binaryDir\": \"${sourceDir}/out/build/${presetName}\",\n";
+  content += "            \"cacheVariables\": {\n";
+  content += "                \"CMAKE_C_COMPILER\": \"/opt/homebrew/opt/llvm/bin/clang\",\n";
+  content += "                \"CMAKE_CXX_COMPILER\": \"/opt/homebrew/opt/llvm/bin/clang++\",\n";
+  content += "                \"CMAKE_C_FLAGS\": \"-march=armv8-a\",\n";
+  content += "                \"CMAKE_CXX_FLAGS\": \"-march=armv8-a\",\n";
+  content += "                \"CMAKE_OSX_ARCHITECTURES\": \"arm64\",\n";
+  content += "                \"REXSDK_DIR\": \"${sourceDir}/../..\"\n";
+  content += "            },\n";
+  content += "            \"condition\": {\n";
+  content += "                \"type\": \"equals\",\n";
+  content += "                \"lhs\": \"${hostSystemName}\",\n";
+  content += "                \"rhs\": \"Darwin\"\n";
+  content += "            }\n";
+  content += "        },\n";
+  content += "        {\n";
   content += "            \"name\": \"win-amd64-debug\",\n";
   content += "            \"displayName\": \"Windows AMD64 Debug\",\n";
   content += "            \"inherits\": \"windows-base\",\n";
@@ -172,6 +191,24 @@ std::string generate_cmake_presets() {
   content += "            \"displayName\": \"Linux AMD64 RelWithDebInfo\",\n";
   content += "            \"inherits\": \"linux-base\",\n";
   content += "            \"cacheVariables\": { \"CMAKE_BUILD_TYPE\": \"RelWithDebInfo\" }\n";
+  content += "        },\n";
+  content += "        {\n";
+  content += "            \"name\": \"mac-arm64-debug\",\n";
+  content += "            \"displayName\": \"macOS ARM64 Debug\",\n";
+  content += "            \"inherits\": \"mac-arm64-base\",\n";
+  content += "            \"cacheVariables\": { \"CMAKE_BUILD_TYPE\": \"Debug\" }\n";
+  content += "        },\n";
+  content += "        {\n";
+  content += "            \"name\": \"mac-arm64-release\",\n";
+  content += "            \"displayName\": \"macOS ARM64 Release\",\n";
+  content += "            \"inherits\": \"mac-arm64-base\",\n";
+  content += "            \"cacheVariables\": { \"CMAKE_BUILD_TYPE\": \"Release\" }\n";
+  content += "        },\n";
+  content += "        {\n";
+  content += "            \"name\": \"mac-arm64-relwithdebinfo\",\n";
+  content += "            \"displayName\": \"macOS ARM64 RelWithDebInfo\",\n";
+  content += "            \"inherits\": \"mac-arm64-base\",\n";
+  content += "            \"cacheVariables\": { \"CMAKE_BUILD_TYPE\": \"RelWithDebInfo\" }\n";
   content += "        }\n";
   content += "    ],\n";
   content += "    \"buildPresets\": [\n";
@@ -189,7 +226,23 @@ std::string generate_cmake_presets() {
       "},\n";
   content +=
       "        { \"name\": \"linux-amd64-relwithdebinfo\", \"configurePreset\": "
-      "\"linux-amd64-relwithdebinfo\" }\n";
+      "\"linux-amd64-relwithdebinfo\" },\n";
+  content +=
+      "        { \"name\": \"mac-arm64-debug\", \"configurePreset\": \"mac-arm64-debug\" },\n";
+  content +=
+      "        { \"name\": \"mac-arm64-release\", \"configurePreset\": \"mac-arm64-release\" },\n";
+  content +=
+      "        { \"name\": \"mac-arm64-relwithdebinfo\", \"configurePreset\": "
+      "\"mac-arm64-relwithdebinfo\" }\n";
+  content += "    ],\n";
+  content += "    \"testPresets\": [\n";
+  content +=
+      "        { \"name\": \"mac-arm64-debug\", \"configurePreset\": \"mac-arm64-debug\" },\n";
+  content +=
+      "        { \"name\": \"mac-arm64-release\", \"configurePreset\": \"mac-arm64-release\" },\n";
+  content +=
+      "        { \"name\": \"mac-arm64-relwithdebinfo\", \"configurePreset\": "
+      "\"mac-arm64-relwithdebinfo\" }\n";
   content += "    ]\n";
   content += "}\n";
 
