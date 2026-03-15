@@ -828,6 +828,70 @@ BaseHeap::BaseHeap() : membase_(nullptr), heap_base_(0), heap_size_(0), page_siz
 
 BaseHeap::~BaseHeap() = default;
 
+bool BaseHeap::SyncHostPageAccess(uint32_t start_page_number, uint32_t end_page_number) {
+  const uint32_t system_page_size = memory_->system_page_size_;
+  if (page_size_ >= system_page_size) {
+    return true;
+  }
+
+  // (Graine25) --- Apple Silicon exposed this mismatch first: the guest still
+  // tracks 4 KB pages, but the host may only let us protect 16 KB pages. Once
+  // multiple guest pages share one host page, host access has to be rebuilt
+  // from the guest page table instead of applied 1:1. ---
+  const auto get_host_page_access = [&](uint32_t system_page_number) {
+    const uint64_t host_page_start = uint64_t(system_page_number) * system_page_size;
+    const uint64_t host_page_end =
+        std::min(host_page_start + system_page_size, uint64_t(host_address_offset_) + heap_size_);
+    const uint32_t guest_page_start =
+        uint32_t(rex::sat_sub(host_page_start, uint64_t(host_address_offset_))) >> page_size_shift_;
+    const uint32_t guest_page_end =
+        (uint32_t(rex::sat_sub(host_page_end, uint64_t(host_address_offset_)) - uint64_t(1))) >>
+        page_size_shift_;
+
+    bool has_read = false;
+    bool has_write = false;
+    for (uint32_t page_number = guest_page_start; page_number <= guest_page_end; ++page_number) {
+      const auto& page_entry = page_table_[page_number];
+      if (!(page_entry.state & memory::kMemoryAllocationCommit)) {
+        continue;
+      }
+      if (page_entry.current_protect & memory::kMemoryProtectRead) {
+        has_read = true;
+      }
+      if (page_entry.current_protect &
+          (memory::kMemoryProtectWrite | memory::kMemoryProtectWriteCombine)) {
+        has_read = true;
+        has_write = true;
+        break;
+      }
+    }
+
+    if (!has_read) {
+      return rex::memory::PageAccess::kNoAccess;
+    }
+    return has_write ? rex::memory::PageAccess::kReadWrite : rex::memory::PageAccess::kReadOnly;
+  };
+
+  const uint32_t guest_byte_start = start_page_number << page_size_shift_;
+  const uint32_t guest_byte_end = ((end_page_number + 1) << page_size_shift_) - 1;
+  uint32_t system_page_first =
+      (guest_byte_start + host_address_offset_) / system_page_size;
+  uint32_t system_page_last =
+      (guest_byte_end + host_address_offset_) / system_page_size;
+
+  for (uint32_t system_page = system_page_first; system_page <= system_page_last; ++system_page) {
+    const auto access = get_host_page_access(system_page);
+    uint8_t* host_page_pointer = membase_ + heap_base_ + size_t(system_page) * system_page_size;
+    if (!rex::memory::Protect(host_page_pointer, system_page_size, access, nullptr)) {
+      REXSYS_ERROR("BaseHeap::SyncHostPageAccess failed for heap {:08X} system page {}", heap_base_,
+                   system_page);
+      return false;
+    }
+  }
+
+  return true;
+}
+
 void BaseHeap::Initialize(memory::Memory* memory, uint8_t* membase, HeapType heap_type,
                           uint32_t heap_base, uint32_t heap_size, uint32_t page_size,
                           uint32_t host_address_offset) {
@@ -1106,19 +1170,25 @@ bool BaseHeap::AllocFixed(uint32_t base_address, uint32_t size, uint32_t alignme
   if (allocation_type == memory::kMemoryAllocationReserve) {
     // Reserve is not needed, as we are mapped already.
   } else {
-    auto alloc_type = (allocation_type & memory::kMemoryAllocationCommit)
-                          ? rex::memory::AllocationType::kCommit
-                          : rex::memory::AllocationType::kReserve;
-    void* result =
-        rex::memory::AllocFixed(TranslateRelative(start_page_number << page_size_shift_),
-                                page_count << page_size_shift_, alloc_type, ToPageAccess(protect));
-    if (!result) {
-      REXSYS_ERROR("BaseHeap::AllocFixed failed to alloc range from host");
-      return false;
+    if (page_size_ >= memory_->system_page_size_) {
+      auto alloc_type = (allocation_type & memory::kMemoryAllocationCommit)
+                            ? rex::memory::AllocationType::kCommit
+                            : rex::memory::AllocationType::kReserve;
+      void* result =
+          rex::memory::AllocFixed(TranslateRelative(start_page_number << page_size_shift_),
+                                  page_count << page_size_shift_, alloc_type, ToPageAccess(protect));
+      if (!result) {
+        REXSYS_ERROR("BaseHeap::AllocFixed failed to alloc range from host");
+        return false;
+      }
     }
-
+    // (Graine25) --- On macOS ARM64 we may be committing a 4 KB guest range
+    // inside a 16 KB host page. Leave the host mapping coarse here and let
+    // SyncHostPageAccess derive the final host protection after the guest page
+    // table has been updated. ---
     if (REXCVAR_GET(scribble_heap) && protect & memory::kMemoryProtectWrite) {
-      std::memset(result, 0xCD, page_count << page_size_shift_);
+      std::memset(TranslateRelative(start_page_number << page_size_shift_), 0xCD,
+                  page_count << page_size_shift_);
     }
   }
 
@@ -1136,6 +1206,10 @@ bool BaseHeap::AllocFixed(uint32_t base_address, uint32_t size, uint32_t alignme
     page_entry.allocation_protect = protect;
     page_entry.current_protect = protect;
     page_entry.state = memory::kMemoryAllocationReserve | allocation_type;
+  }
+
+  if (!SyncHostPageAccess(start_page_number, end_page_number)) {
+    return false;
   }
 
   return true;
@@ -1260,19 +1334,24 @@ bool BaseHeap::AllocRange(uint32_t low_address, uint32_t high_address, uint32_t 
   if (allocation_type == memory::kMemoryAllocationReserve) {
     // Reserve is not needed, as we are mapped already.
   } else {
-    auto alloc_type = (allocation_type & memory::kMemoryAllocationCommit)
-                          ? rex::memory::AllocationType::kCommit
-                          : rex::memory::AllocationType::kReserve;
-    void* result =
-        rex::memory::AllocFixed(TranslateRelative(start_page_number << page_size_shift_),
-                                page_count << page_size_shift_, alloc_type, ToPageAccess(protect));
-    if (!result) {
-      REXSYS_ERROR("BaseHeap::Alloc failed to alloc range from host");
-      return false;
+    if (page_size_ >= memory_->system_page_size_) {
+      auto alloc_type = (allocation_type & memory::kMemoryAllocationCommit)
+                            ? rex::memory::AllocationType::kCommit
+                            : rex::memory::AllocationType::kReserve;
+      void* result =
+          rex::memory::AllocFixed(TranslateRelative(start_page_number << page_size_shift_),
+                                  page_count << page_size_shift_, alloc_type, ToPageAccess(protect));
+      if (!result) {
+        REXSYS_ERROR("BaseHeap::Alloc failed to alloc range from host");
+        return false;
+      }
     }
-
+    // (Graine25) --- Same macOS ARM64 issue as AllocFixed: the guest allocation
+    // granularity can be smaller than the host protection granularity, so the
+    // page table remains the source of truth and host access is synced after. ---
     if (REXCVAR_GET(scribble_heap) && (protect & memory::kMemoryProtectWrite)) {
-      std::memset(result, 0xCD, page_count << page_size_shift_);
+      std::memset(TranslateRelative(start_page_number << page_size_shift_), 0xCD,
+                  page_count << page_size_shift_);
     }
   }
 
@@ -1287,6 +1366,10 @@ bool BaseHeap::AllocRange(uint32_t low_address, uint32_t high_address, uint32_t 
     page_entry.allocation_protect = protect;
     page_entry.current_protect = protect;
     page_entry.state = memory::kMemoryAllocationReserve | allocation_type;
+  }
+
+  if (!SyncHostPageAccess(start_page_number, end_page_number)) {
+    return false;
   }
 
   *out_address = heap_base_ + (start_page_number << page_size_shift_);
@@ -1317,6 +1400,10 @@ bool BaseHeap::Decommit(uint32_t address, uint32_t size) {
   for (uint32_t page_number = start_page_number; page_number <= end_page_number; ++page_number) {
     auto& page_entry = page_table_[page_number];
     page_entry.state &= ~memory::kMemoryAllocationCommit;
+  }
+
+  if (!SyncHostPageAccess(start_page_number, end_page_number)) {
+    return false;
   }
 
   return true;
@@ -1374,6 +1461,10 @@ bool BaseHeap::Release(uint32_t base_address, uint32_t* out_region_size) {
     unreserved_page_count_++;
   }
 
+  if (!SyncHostPageAccess(base_page_number, end_page_number)) {
+    return false;
+  }
+
   return true;
 }
 
@@ -1429,11 +1520,8 @@ bool BaseHeap::Protect(uint32_t address, uint32_t size, uint32_t protect, uint32
   }
 
   // Attempt host change (hopefully won't fail).
-  // We can only do this if our size matches system page granularity.
   uint32_t page_count = end_page_number - start_page_number + 1;
-  if (page_size_ == rex::memory::page_size() ||
-      (((page_count << page_size_shift_) % rex::memory::page_size() == 0) &&
-       ((start_page_number << page_size_shift_) % rex::memory::page_size() == 0))) {
+  if (page_size_ >= memory_->system_page_size_) {
     memory::PageAccess old_protect_access;
     if (!rex::memory::Protect(TranslateRelative(start_page_number << page_size_shift_),
                               page_count << page_size_shift_, ToPageAccess(protect),
@@ -1446,14 +1534,23 @@ bool BaseHeap::Protect(uint32_t address, uint32_t size, uint32_t protect, uint32
       *old_protect = FromPageAccess(old_protect_access);
     }
   } else {
-    REXSYS_WARN("BaseHeap::Protect: ignoring request as not 4k page aligned");
-    return false;
+    // (Graine25) --- macOS ARM64 can't report a meaningful per-guest-page old
+    // protection from the host when several guest pages share one host page.
+    // Preserve the guest-visible answer from the page table and then rebuild
+    // the overlapping host page protection below. ---
+    if (old_protect) {
+      *old_protect = page_table_[start_page_number].current_protect;
+    }
   }
 
   // Perform table change.
   for (uint32_t page_number = start_page_number; page_number <= end_page_number; ++page_number) {
     auto& page_entry = page_table_[page_number];
     page_entry.current_protect = protect;
+  }
+
+  if (!SyncHostPageAccess(start_page_number, end_page_number)) {
+    return false;
   }
 
   return true;
