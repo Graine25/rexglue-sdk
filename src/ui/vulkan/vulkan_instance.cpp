@@ -96,9 +96,11 @@ std::unique_ptr<VulkanInstance> VulkanInstance::Create(const bool with_surface,
   // #129.
   requested_extensions.emplace("VK_EXT_debug_utils",
                                &vulkan_instance->extensions_.ext_EXT_debug_utils);
+#if REX_PLATFORM_MACOS
   // #395.
-  requested_extensions.emplace("VK_KHR_portability_enumeration",
+  requested_extensions.emplace(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME,
                                &vulkan_instance->extensions_.ext_KHR_portability_enumeration);
+#endif
   if (with_surface) {
     // #1.
     requested_extensions.emplace("VK_KHR_surface", &vulkan_instance->extensions_.ext_KHR_surface);
@@ -301,12 +303,14 @@ std::unique_ptr<VulkanInstance> VulkanInstance::Create(const bool with_surface,
   instance_create_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
   instance_create_info.pNext = nullptr;
   instance_create_info.flags = 0;
+#if REX_PLATFORM_MACOS
   // VK_KHR_get_physical_device_properties2 is needed to get the portability
   // subset features.
   if (vulkan_instance->extensions_.ext_KHR_portability_enumeration &&
       vulkan_instance->extensions_.ext_1_1_KHR_get_physical_device_properties2) {
     instance_create_info.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
   }
+#endif
   instance_create_info.pApplicationInfo = &application_info;
   instance_create_info.enabledLayerCount = uint32_t(enabled_layers.size());
   instance_create_info.ppEnabledLayerNames = enabled_layers.data();
