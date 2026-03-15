@@ -49,6 +49,14 @@ endif()
 # Root of the SDK source tree
 set(REXGLUE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
 
+# Resolve the effective host architecture. On macOS, CMAKE_SYSTEM_PROCESSOR may
+# reflect the running CMake process rather than CMAKE_OSX_ARCHITECTURES.
+set(REXGLUE_EFFECTIVE_SYSTEM_PROCESSOR "${CMAKE_SYSTEM_PROCESSOR}")
+if (APPLE AND CMAKE_OSX_ARCHITECTURES)
+  list(GET CMAKE_OSX_ARCHITECTURES 0 REXGLUE_EFFECTIVE_SYSTEM_PROCESSOR)
+endif ()
+string(TOLOWER "${REXGLUE_EFFECTIVE_SYSTEM_PROCESSOR}" REXGLUE_EFFECTIVE_SYSTEM_PROCESSOR_LOWER)
+
 # SDK install support
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
@@ -82,7 +90,7 @@ set(CMAKE_RELWITHDEBINFO_POSTFIX rd)
 
 if (NOT WIN32)
   # Use appropriate code model based on architecture
-  if (CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+  if (REXGLUE_EFFECTIVE_SYSTEM_PROCESSOR_LOWER MATCHES "^(x86_64|amd64)$")
     # Large code model on x86_64 for linking with very large recompiled executables .
     add_compile_options(-mcmodel=large)
   else ()
@@ -115,18 +123,18 @@ elseif (APPLE)
   set(REXGLUE_USE_D3D12 OFF CACHE BOOL "" FORCE)
   set(REXGLUE_ENABLE_FIDELITYFX OFF CACHE BOOL "" FORCE)
   add_compile_definitions(REX_PLATFORM_MAC=1)
-  if (CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+  if (REXGLUE_EFFECTIVE_SYSTEM_PROCESSOR_LOWER MATCHES "^(arm64|aarch64)$")
     set(REX_ARCH_ARM64 TRUE)
     add_compile_definitions(REX_ARCH_ARM64=1)
     add_compile_options(-march=armv8-a)
   endif ()
 elseif (UNIX AND NOT APPLE)
-  if (CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+  if (REXGLUE_EFFECTIVE_SYSTEM_PROCESSOR_LOWER MATCHES "^(x86_64|amd64)$")
     set(REX_PLATFORM "linux-amd64")
-  elseif (CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|ARM64")
+  elseif (REXGLUE_EFFECTIVE_SYSTEM_PROCESSOR_LOWER MATCHES "^(aarch64|arm64)$")
     set(REX_PLATFORM "linux-arm64")
   else ()
-    set(REX_PLATFORM "linux-${CMAKE_SYSTEM_PROCESSOR}")
+    set(REX_PLATFORM "linux-${REXGLUE_EFFECTIVE_SYSTEM_PROCESSOR}")
   endif ()
   add_compile_definitions(REX_PLATFORM_LINUX=1)
 else ()

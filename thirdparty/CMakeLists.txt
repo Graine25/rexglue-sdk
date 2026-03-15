@@ -8,10 +8,17 @@ set(BUILD_SHARED_LIBS
 #=============================================================================
 # Architecture detection
 #=============================================================================
-if (CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|ARM64)$")
+set(REXGLUE_EFFECTIVE_SYSTEM_PROCESSOR "${CMAKE_SYSTEM_PROCESSOR}")
+if (APPLE AND CMAKE_OSX_ARCHITECTURES)
+  list(GET CMAKE_OSX_ARCHITECTURES 0 REXGLUE_EFFECTIVE_SYSTEM_PROCESSOR)
+endif ()
+
+string(TOLOWER "${REXGLUE_EFFECTIVE_SYSTEM_PROCESSOR}" REXGLUE_EFFECTIVE_SYSTEM_PROCESSOR_LOWER)
+
+if (REXGLUE_EFFECTIVE_SYSTEM_PROCESSOR_LOWER MATCHES "^(aarch64|arm64)$")
   set(IS_ARM64 TRUE)
   set(IS_X86_64 FALSE)
-elseif (CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64)$")
+elseif (REXGLUE_EFFECTIVE_SYSTEM_PROCESSOR_LOWER MATCHES "^(x86_64|amd64)$")
   set(IS_ARM64 FALSE)
   set(IS_X86_64 TRUE)
 else ()

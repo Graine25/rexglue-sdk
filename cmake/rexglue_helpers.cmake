@@ -11,6 +11,15 @@
 #   - Platform-specific link/compile settings
 #==========================================================
 function (rexglue_configure_target target_name)
+  set(rexglue_effective_system_processor "${REXGLUE_EFFECTIVE_SYSTEM_PROCESSOR}")
+  if (NOT rexglue_effective_system_processor)
+    set(rexglue_effective_system_processor "${CMAKE_SYSTEM_PROCESSOR}")
+    if (APPLE AND CMAKE_OSX_ARCHITECTURES)
+      list(GET CMAKE_OSX_ARCHITECTURES 0 rexglue_effective_system_processor)
+    endif ()
+  endif ()
+  string(TOLOWER "${rexglue_effective_system_processor}" rexglue_effective_system_processor_lower)
+
   # Platform entry point
   if (WIN32)
     target_sources(${target_name} PRIVATE ${REXGLUE_SHARE_DIR}/windowed_app_main_win.cpp)
@@ -33,16 +42,16 @@ function (rexglue_configure_target target_name)
       ${target_name} PRIVATE -Wl,--whole-archive $<TARGET_FILE:rex::kernel> -Wl,--no-whole-archive
     )
     # Large executable support
-    if (CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+    if (rexglue_effective_system_processor_lower MATCHES "^(x86_64|amd64)$")
       target_link_options(${target_name} PRIVATE -Wl,--no-relax)
       target_compile_options(${target_name} PRIVATE -mcmodel=large)
-    elseif (CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|ARM64")
+    elseif (rexglue_effective_system_processor_lower MATCHES "^(aarch64|arm64)$")
       target_compile_options(${target_name} PRIVATE -march=armv8-a)
     endif ()
   endif ()
 
   if (NOT MSVC)
-    if (CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+    if (NOT APPLE AND rexglue_effective_system_processor_lower MATCHES "^(x86_64|amd64)$")
       target_compile_options(${target_name} PRIVATE -msse4.1)
     endif ()
     # ARM64 NEON is enabled via -march=armv8-a above
