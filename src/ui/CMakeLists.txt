@@ -62,7 +62,9 @@ if(WIN32)
         windowed_app_context_win.cpp
     )
 elseif(APPLE)
-    set(REXUI_PLATFORM_SOURCES)
+    set(REXUI_PLATFORM_SOURCES
+        window_stub.cpp
+    )
 else()
     set(REXUI_PLATFORM_SOURCES
         surface_gnulinux.cpp
@@ -130,6 +132,10 @@ if(REXGLUE_USE_VULKAN)
         GPUOpen::VulkanMemoryAllocator
         SPIRV-Tools-static
     )
+    if(APPLE)
+        target_link_libraries(rexui PRIVATE MoltenVK)
+        target_compile_definitions(rexui PRIVATE VK_USE_PLATFORM_METAL_EXT)
+    endif()
 endif()
 
 # Platform-specific dependencies
