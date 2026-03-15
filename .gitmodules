@@ -63,3 +63,6 @@
 [submodule "thirdparty/FidelityFX"]
 	path = thirdparty/FidelityFX
 	url = https://github.com/rexglue/FidelityFX-SDK.git
+[submodule "thirdparty/MoltenVK"]
+	path = thirdparty/MoltenVK
+	url = https://github.com/KhronosGroup/MoltenVK
