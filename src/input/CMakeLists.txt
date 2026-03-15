@@ -4,6 +4,7 @@
 add_library(rexinput STATIC
     input_system.cpp
     nop/nop_input_driver.cpp
+    sdl/sdl_input_driver.cpp
 )
 add_library(rex::input ALIAS rexinput)
 
@@ -12,5 +13,4 @@ target_include_directories(rexinput PUBLIC
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 
-target_sources(rexinput PRIVATE sdl/sdl_input_driver.cpp)
 target_link_libraries(rexinput PUBLIC rexcore SDL2::SDL2)
