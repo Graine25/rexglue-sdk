@@ -40,7 +40,11 @@ std::string generate_cmakelists(const AppNameParts& names) {
   content += "# SDK boilerplate lives in generated/rexglue.cmake.\n";
   content += "\n";
   content += "cmake_minimum_required(VERSION 3.25)\n";
-  content += "project(" + names.snake_case + " LANGUAGES CXX)\n";
+  content += "set(" + names.upper_case + "_LANGUAGES CXX)\n";
+  content += "if(APPLE)\n";
+  content += "    list(APPEND " + names.upper_case + "_LANGUAGES OBJC OBJCXX)\n";
+  content += "endif()\n";
+  content += "project(" + names.snake_case + " LANGUAGES ${" + names.upper_case + "_LANGUAGES})\n";
   content += "\n";
   content += "set(CMAKE_CXX_STANDARD 23)\n";
   content += "set(CMAKE_CXX_STANDARD_REQUIRED ON)\n";

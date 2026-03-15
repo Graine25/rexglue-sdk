@@ -2,9 +2,14 @@
 # Modern C++23 cross-platform SDK for recompiling Xbox 360 executables
 cmake_minimum_required(VERSION 3.25)
 
+set(REXGLUE_PROJECT_LANGUAGES C CXX)
+if (APPLE)
+  list(APPEND REXGLUE_PROJECT_LANGUAGES OBJC OBJCXX)
+endif ()
+
 project(ReXGlue
     VERSION 0.4.2
-    LANGUAGES C CXX
+    LANGUAGES ${REXGLUE_PROJECT_LANGUAGES}
     DESCRIPTION "Xbox 360 Recompilation SDK"
 )
 
