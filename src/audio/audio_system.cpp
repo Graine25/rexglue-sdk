@@ -13,6 +13,10 @@
 #include <rex/audio/audio_driver.h>
 #include <rex/audio/audio_system.h>
 #include <rex/audio/flags.h>
+#include <rex/audio/nop/nop_audio_system.h>
+#if !defined(__APPLE__)
+#include <rex/audio/sdl/sdl_audio_system.h>
+#endif
 #include <rex/audio/xma/decoder.h>
 #include <rex/dbg.h>
 #include <rex/logging.h>
@@ -41,6 +45,17 @@ REXCVAR_DEFINE_INT32(
 // implementations. They can be found in xboxkrnl_audio_xma.cc
 
 namespace rex::audio {
+
+std::unique_ptr<system::IAudioSystem> CreateDefaultAudioSystem(runtime::Processor* processor) {
+#if defined(__APPLE__)
+  // (Graine25) --- Phase 2 on macOS only needs codegen + compile to work. The
+  // SDL audio runtime path is not validated there yet, so keep Apple on the
+  // nop backend until the native/windowed runtime work lands. ---
+  return nop::NopAudioSystem::Create(processor);
+#else
+  return sdl::SDLAudioSystem::Create(processor);
+#endif
+}
 
 AudioSystem::AudioSystem(runtime::Processor* processor)
     : memory_(processor->memory()), processor_(processor), worker_running_(false) {

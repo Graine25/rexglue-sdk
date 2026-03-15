@@ -28,7 +28,6 @@
 #include <rex/graphics/d3d12/graphics_system.h>
 #endif
 #include <rex/audio/audio_system.h>
-#include <rex/audio/sdl/sdl_audio_system.h>
 #include <rex/input/input_system.h>
 #include <rex/kernel/init.h>
 #include <rex/system/kernel_state.h>
@@ -124,7 +123,7 @@ bool ReXApp::OnInitialize() {
 #elif REX_HAS_VULKAN
   config.graphics = REX_GRAPHICS_BACKEND(rex::graphics::vulkan::VulkanGraphicsSystem);
 #endif
-  config.audio_factory = REX_AUDIO_BACKEND(rex::audio::sdl::SDLAudioSystem);
+  config.audio_factory = rex::audio::CreateDefaultAudioSystem;
   config.input_factory = REX_INPUT_BACKEND(rex::input::CreateDefaultInputSystem);
   config.kernel_init = rex::kernel::InitializeKernel;
 
