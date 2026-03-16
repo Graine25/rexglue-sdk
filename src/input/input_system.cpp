@@ -104,17 +104,45 @@ X_RESULT InputSystem::GetKeystroke(uint32_t user_index, uint32_t flags,
 std::unique_ptr<InputSystem> CreateDefaultInputSystem(bool tool_mode) {
   auto input = std::make_unique<InputSystem>(nullptr);
 
+#if REX_PLATFORM_MACOS
+  // On macOS, SDL's GameController startup can block while AppKit/GameController
+  // frameworks are still being brought up. Delay attaching the SDL driver until
+  // the Cocoa window and UI loop are live.
+  (void)tool_mode;
+#else
   if (!tool_mode) {
     auto sdl_driver = std::make_unique<sdl::SDLInputDriver>(nullptr, 0);
     if (sdl_driver->Setup() == X_STATUS_SUCCESS) {
       input->AddDriver(std::move(sdl_driver));
     }
   }
+#endif
 
   // NOP driver (primary in tool mode, fallback otherwise)
   uint8_t nop_index = tool_mode ? 0 : 1;
   input->AddDriver(std::make_unique<nop::NopInputDriver>(nullptr, nop_index));
   return input;
+}
+
+X_STATUS AttachDefaultInputDrivers(InputSystem& input_system, rex::ui::Window* window,
+                                   bool tool_mode) {
+#if REX_PLATFORM_MACOS
+  if (tool_mode) {
+    return X_STATUS_SUCCESS;
+  }
+
+  auto sdl_driver = std::make_unique<sdl::SDLInputDriver>(window, 0);
+  X_STATUS status = sdl_driver->Setup();
+  if (XSUCCEEDED(status)) {
+    input_system.AddDriver(std::move(sdl_driver));
+  }
+  return status;
+#else
+  (void)input_system;
+  (void)window;
+  (void)tool_mode;
+  return X_STATUS_SUCCESS;
+#endif
 }
 
 }  // namespace rex::input

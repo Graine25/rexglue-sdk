@@ -50,4 +50,8 @@ class InputSystem : public system::IInputSystem {
 /// In tool mode, only the NOP driver is added.
 std::unique_ptr<InputSystem> CreateDefaultInputSystem(bool tool_mode);
 
+/// Attach platform-specific drivers after a window and UI loop are available.
+X_STATUS AttachDefaultInputDrivers(InputSystem& input_system, rex::ui::Window* window,
+                                   bool tool_mode);
+
 }  // namespace rex::input
