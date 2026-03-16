@@ -29,7 +29,14 @@ REXCVAR_DEFINE_BOOL(vulkan_require_vertex_pipeline_stores_and_atomics, true, "UI
                     "Deprecated and ignored for parity; vertexPipelineStoresAndAtomics is always "
                     "required for Vulkan GPU emulation")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
-REXCVAR_DEFINE_BOOL(vulkan_require_geometry_shader, true, "UI/Vulkan",
+#if REX_PLATFORM_MACOS
+constexpr bool kVulkanRequireGeometryShaderDefault = false;
+#else
+constexpr bool kVulkanRequireGeometryShaderDefault = true;
+#endif
+
+REXCVAR_DEFINE_BOOL(vulkan_require_geometry_shader, kVulkanRequireGeometryShaderDefault,
+                    "UI/Vulkan",
                     "Require geometryShader support for Vulkan GPU emulation (disable to allow "
                     "fallback primitive emulation paths)")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);

@@ -9,6 +9,9 @@
  * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
  */
 
+#include <algorithm>
+#include <array>
+#include <filesystem>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -16,6 +19,7 @@
 #include <vector>
 
 #include <rex/cvar.h>
+#include <rex/filesystem.h>
 #include <rex/logging.h>
 #include <rex/platform.h>
 #include <rex/ui/vulkan/instance.h>
@@ -26,6 +30,51 @@ REXCVAR_DEFINE_BOOL(vulkan_log_debug_messages, true, "UI/Vulkan", "Log Vulkan de
 namespace rex {
 namespace ui {
 namespace vulkan {
+
+#if REX_PLATFORM_MACOS
+namespace {
+
+bool LoadMacVulkanLoader(platform::DynamicLibrary& loader) {
+  if (loader.Load(platform::lib_names::kVulkanLoader)) {
+    return true;
+  }
+
+  const auto exe_dir = rex::filesystem::GetExecutableFolder();
+  const std::array<const char*, 4> fallback_names = {
+      "libMoltenVKd.dylib",
+      "libMoltenVKd.1.dylib",
+      "libMoltenVK.dylib",
+      "libMoltenVK.1.dylib",
+  };
+  for (const char* fallback_name : fallback_names) {
+    if (loader.Load(exe_dir / fallback_name)) {
+      return true;
+    }
+  }
+
+  std::vector<std::filesystem::path> versioned_candidates;
+  for (const auto& entry : std::filesystem::directory_iterator(exe_dir)) {
+    if (!entry.is_regular_file()) {
+      continue;
+    }
+    const auto filename = entry.path().filename().string();
+    if (!filename.starts_with("libMoltenVK") || entry.path().extension() != ".dylib") {
+      continue;
+    }
+    versioned_candidates.push_back(entry.path());
+  }
+  std::sort(versioned_candidates.begin(), versioned_candidates.end());
+  for (const auto& candidate : versioned_candidates) {
+    if (loader.Load(candidate)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+}  // namespace
+#endif
 
 std::unique_ptr<VulkanInstance> VulkanInstance::Create(const bool with_surface,
                                                        const bool try_enable_validation) {
@@ -40,7 +89,13 @@ std::unique_ptr<VulkanInstance> VulkanInstance::Create(const bool with_surface,
   Functions& ifn = vulkan_instance->functions_;
 
   bool functions_loaded = true;
-  if (!vulkan_instance->loader_.Load(platform::lib_names::kVulkanLoader)) {
+  bool loader_loaded = false;
+#if REX_PLATFORM_MACOS
+  loader_loaded = LoadMacVulkanLoader(vulkan_instance->loader_);
+#else
+  loader_loaded = vulkan_instance->loader_.Load(platform::lib_names::kVulkanLoader);
+#endif
+  if (!loader_loaded) {
     REXLOG_ERROR("Failed to load {}", platform::lib_names::kVulkanLoader);
     return nullptr;
   }
@@ -118,6 +173,11 @@ std::unique_ptr<VulkanInstance> VulkanInstance::Create(const bool with_surface,
     // #10.
     requested_extensions.emplace("VK_KHR_win32_surface",
                                  &vulkan_instance->extensions_.ext_KHR_win32_surface);
+#endif
+#ifdef VK_USE_PLATFORM_METAL_EXT
+    // #218.
+    requested_extensions.emplace("VK_EXT_metal_surface",
+                                 &vulkan_instance->extensions_.ext_EXT_metal_surface);
 #endif
   }
 
@@ -382,6 +442,11 @@ std::unique_ptr<VulkanInstance> VulkanInstance::Create(const bool with_surface,
 #ifdef VK_USE_PLATFORM_WIN32_KHR
   if (vulkan_instance->extensions_.ext_KHR_win32_surface) {
 #include <rex/ui/vulkan/functions/instance_khr_win32_surface.inc>
+  }
+#endif
+#ifdef VK_USE_PLATFORM_METAL_EXT
+  if (vulkan_instance->extensions_.ext_EXT_metal_surface) {
+#include <rex/ui/vulkan/functions/instance_ext_metal_surface.inc>
   }
 #endif
   if (vulkan_instance->extensions_.ext_KHR_surface) {
