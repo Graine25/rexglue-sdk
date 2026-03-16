@@ -283,7 +283,11 @@ void CommandProcessor::WorkerThreadMain() {
     }
 
     uint32_t write_ptr_index = write_ptr_index_.load();
-    if (write_ptr_index == 0xBAADF00D || read_ptr_index_ == write_ptr_index) {
+    bool waiting_for_primary_buffer_progress =
+        stalled_primary_buffer_read_index_ == read_ptr_index_ &&
+        stalled_primary_buffer_write_index_ == write_ptr_index;
+    if (write_ptr_index == 0xBAADF00D || read_ptr_index_ == write_ptr_index ||
+        waiting_for_primary_buffer_progress) {
       SCOPE_profile_cpu_i("gpu", "rex::graphics::CommandProcessor::Stall");
       // We've run out of commands to execute.
       // We spin here waiting for new ones, as the overhead of waiting on our
@@ -301,8 +305,12 @@ void CommandProcessor::WorkerThreadMain() {
         rex::thread::MaybeYield();
         loop_count++;
         write_ptr_index = write_ptr_index_.load();
+        waiting_for_primary_buffer_progress =
+            stalled_primary_buffer_read_index_ == read_ptr_index_ &&
+            stalled_primary_buffer_write_index_ == write_ptr_index;
       } while (worker_running_ && pending_fns_.empty() &&
-               (write_ptr_index == 0xBAADF00D || read_ptr_index_ == write_ptr_index));
+               (write_ptr_index == 0xBAADF00D || read_ptr_index_ == write_ptr_index ||
+                waiting_for_primary_buffer_progress));
       ReturnFromWait();
       if (!worker_running_ || !pending_fns_.empty()) {
         continue;
@@ -312,12 +320,20 @@ void CommandProcessor::WorkerThreadMain() {
 
     // Execute. Note that we handle wraparound transparently.
     read_ptr_index_ = ExecutePrimaryBuffer(read_ptr_index_, write_ptr_index);
+    if (read_ptr_index_ != write_ptr_index) {
+      stalled_primary_buffer_read_index_ = read_ptr_index_;
+      stalled_primary_buffer_write_index_ = write_ptr_index;
+    } else {
+      stalled_primary_buffer_read_index_ = UINT32_MAX;
+      stalled_primary_buffer_write_index_ = UINT32_MAX;
+    }
 
     // TODO(benvanik): use reader->Read_update_freq_ and only issue after moving
     //     that many indices.
     if (read_ptr_writeback_ptr_) {
-      memory::store_and_swap<uint32_t>(memory_->TranslatePhysical(read_ptr_writeback_ptr_),
-                                       read_ptr_index_);
+      uint8_t* read_ptr_writeback_physical =
+          memory_->TranslatePhysical(read_ptr_writeback_ptr_);
+      memory::store_and_swap<uint32_t>(read_ptr_writeback_physical, read_ptr_index_);
     }
 
     // FIXME: We're supposed to process the WAIT_UNTIL register at this point,
@@ -712,11 +728,13 @@ uint32_t CommandProcessor::ExecutePrimaryBuffer(uint32_t read_index, uint32_t wr
   memory::RingBuffer reader(memory_->TranslatePhysical(primary_buffer_ptr_), primary_buffer_size_);
   reader.set_read_offset(read_index * sizeof(uint32_t));
   reader.set_write_offset(write_index * sizeof(uint32_t));
+  uint32_t retry_read_index = write_index;
   do {
+    uint32_t packet_start_offset = reader.read_offset();
     if (!ExecutePacket(&reader)) {
-      // This probably should be fatal - but we're going to continue anyways.
-      REXGPU_ERROR("**** PRIMARY RINGBUFFER: Failed to execute packet.");
-      assert_always();
+      // Return the position of the failed packet header so the CP worker can
+      // retry when CP_RB_WPTR advances to cover the full packet data.
+      retry_read_index = packet_start_offset / sizeof(uint32_t);
       break;
     }
   } while (reader.read_count());
@@ -725,7 +743,7 @@ uint32_t CommandProcessor::ExecutePrimaryBuffer(uint32_t read_index, uint32_t wr
 
   trace_writer_.WritePrimaryBufferEnd();
 
-  return write_index;
+  return retry_read_index;
 }
 
 void CommandProcessor::ExecuteIndirectBuffer(uint32_t ptr, uint32_t count) {

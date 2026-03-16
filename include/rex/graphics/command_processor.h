@@ -277,6 +277,8 @@ class CommandProcessor {
   uint32_t read_ptr_index_ = 0;
   uint32_t read_ptr_update_freq_ = 0;
   uint32_t read_ptr_writeback_ptr_ = 0;
+  uint32_t stalled_primary_buffer_read_index_ = UINT32_MAX;
+  uint32_t stalled_primary_buffer_write_index_ = UINT32_MAX;
 
   std::unique_ptr<rex::thread::Event> write_ptr_index_event_;
   std::atomic<uint32_t> write_ptr_index_;
