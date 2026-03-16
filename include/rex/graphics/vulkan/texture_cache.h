@@ -316,6 +316,10 @@ class VulkanTextureCache final : public TextureCache {
   bool Initialize();
   bool InitializeScaledResolveBuffer();
   void ShutdownScaledResolveBuffer();
+  std::pair<const uint32_t*, size_t> GetLoadShaderCode(LoadShaderIndex load_shader,
+                                                       bool scaled) const;
+  VkPipeline EnsureLoadPipeline(LoadShaderIndex load_shader, bool scaled);
+  bool IsLoadShaderAvailable(LoadShaderIndex load_shader, bool scaled) const;
 
   const HostFormatPair& GetHostFormatPair(TextureKey key) const;
 
