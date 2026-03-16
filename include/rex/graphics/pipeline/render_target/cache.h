@@ -489,6 +489,9 @@ class RenderTargetCache {
   virtual bool IsHostDepthEncodingDifferent(xenos::DepthRenderTargetFormat format) const = 0;
 
   void ResetAccumulatedRenderTargets() { are_accumulated_render_targets_valid_ = false; }
+  RenderTarget* const* last_update_used_render_targets() const {
+    return last_update_used_render_targets_;
+  }
   RenderTarget* const* last_update_accumulated_render_targets() const {
     assert_true(GetPath() == Path::kHostRenderTargets);
     return last_update_accumulated_render_targets_;

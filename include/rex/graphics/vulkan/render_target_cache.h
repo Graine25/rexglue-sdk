@@ -110,6 +110,19 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
                VulkanTextureCache& texture_cache, uint32_t& written_address_out,
                uint32_t& written_length_out);
 
+  struct DirectSwapSource {
+    VkImageView image_view = VK_NULL_HANDLE;
+    uint32_t base_address = 0;
+    uint32_t width_unscaled = 0;
+    uint32_t height_unscaled = 0;
+    uint32_t width_scaled = 0;
+    uint32_t height_scaled = 0;
+    xenos::TextureFormat format = xenos::TextureFormat::k_8_8_8_8;
+
+    bool valid() const { return image_view != VK_NULL_HANDLE && base_address != 0; }
+  };
+  bool GetDirectSwapSource(uint32_t frontbuffer_ptr, DirectSwapSource& source_out) const;
+
   // Returns true if any downloads were submitted to the command processor.
   bool InitializeTraceSubmitDownloads();
   void InitializeTraceCompleteDownloads();
@@ -250,6 +263,8 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   void CommitEdramBufferShaderWrites(
       EdramBufferModificationStatus commit_status =
           EdramBufferModificationStatus::kViaFragmentShaderInterlock);
+  VkPipeline EnsureResolveCopyPipeline(draw_util::ResolveCopyShaderIndex shader_index);
+  VkPipeline EnsureHostDepthStorePipeline(xenos::MsaaSamples msaa_samples);
 
   VulkanCommandProcessor& command_processor_;
   TraceWriter& trace_writer_;
@@ -286,8 +301,7 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   // The pitch is not used on the fragment shader interlock path.
   uint32_t last_update_framebuffer_pitch_tiles_at_32bpp_ = 0;
   // The attachments are not used on the fragment shader interlock path.
-  const RenderTarget* const*
-      last_update_framebuffer_attachments_[1 + xenos::kMaxColorRenderTargets] = {};
+  const RenderTarget* last_update_framebuffer_attachments_[1 + xenos::kMaxColorRenderTargets] = {};
   const Framebuffer* last_update_framebuffer_ = VK_NULL_HANDLE;
 
   // For host render targets.
@@ -803,7 +817,7 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   // resolve_clear_rectangle is expected to be provided by
   // PrepareHostRenderTargetsResolveClear which should do all the needed size
   // bound checks.
-  void PerformTransfersAndResolveClears(
+  bool PerformTransfersAndResolveClears(
       uint32_t render_target_count, RenderTarget* const* render_targets,
       const std::vector<Transfer>* render_target_transfers,
       const uint64_t* render_target_resolve_clear_values = nullptr,
@@ -865,6 +879,7 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   VkPipelineLayout direct_resolve_pipeline_layout_depth_ = VK_NULL_HANDLE;
   std::unordered_map<DirectResolvePipelineKey, VkPipeline, DirectResolvePipelineKey::Hasher>
       direct_resolve_pipelines_;
+  DirectSwapSource direct_swap_source_;
 
   // Temporary storage for Resolve.
   std::vector<Transfer> clear_transfers_[2];

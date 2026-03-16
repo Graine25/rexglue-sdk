@@ -196,6 +196,7 @@ VulkanRenderTargetCache::~VulkanRenderTargetCache() {
 }
 
 bool VulkanRenderTargetCache::Initialize(uint32_t shared_memory_binding_count) {
+  REXGPU_INFO("VulkanRenderTargetCache::Initialize stage=begin");
   const ui::vulkan::VulkanDevice* const vulkan_device = command_processor_.GetVulkanDevice();
   const ui::vulkan::VulkanInstance::Functions& ifn = vulkan_device->vulkan_instance()->functions();
   const VkPhysicalDevice physical_device = vulkan_device->physical_device();
@@ -209,8 +210,11 @@ bool VulkanRenderTargetCache::Initialize(uint32_t shared_memory_binding_count) {
       device_properties.fragmentStoresAndAtomics && device_properties.sampleRateShading &&
       device_properties.standardSampleLocations &&
       shared_memory_binding_count < device_properties.maxPerStageDescriptorStorageBuffers;
-  if (REXCVAR_GET(render_target_path_vulkan) == "fsi") {
+  const std::string render_target_path = REXCVAR_GET(render_target_path_vulkan);
+  if (render_target_path == "fsi") {
     path_ = Path::kPixelShaderInterlock;
+  } else if (render_target_path == "fbo") {
+    path_ = Path::kHostRenderTargets;
   } else {
     path_ = Path::kHostRenderTargets;
   }
@@ -371,6 +375,8 @@ bool VulkanRenderTargetCache::Initialize(uint32_t shared_memory_binding_count) {
       !(device_properties.sampledImageIntegerSampleCounts & VK_SAMPLE_COUNT_4_BIT)) {
     REXGPU_WARN("VulkanRenderTargetCache: 4x integer sampled-image support is unavailable");
   }
+  REXGPU_INFO("VulkanRenderTargetCache::Initialize stage=format_checks path={}",
+              path_ == Path::kHostRenderTargets ? "host" : "fsi");
 
   // 2x MSAA support.
   if (REXCVAR_GET(native_2x_msaa)) {
@@ -462,6 +468,7 @@ bool VulkanRenderTargetCache::Initialize(uint32_t shared_memory_binding_count) {
     Shutdown();
     return false;
   }
+  REXGPU_INFO("VulkanRenderTargetCache::Initialize stage=descriptor_layouts");
 
   // Descriptor set pools.
   // The pool sizes were chosen without a specific reason.
@@ -551,6 +558,7 @@ bool VulkanRenderTargetCache::Initialize(uint32_t shared_memory_binding_count) {
   edram_storage_buffer_descriptor_write.pBufferInfo = &edram_storage_buffer_descriptor_buffer_info;
   edram_storage_buffer_descriptor_write.pTexelBufferView = nullptr;
   dfn.vkUpdateDescriptorSets(device, 1, &edram_storage_buffer_descriptor_write, 0, nullptr);
+  REXGPU_INFO("VulkanRenderTargetCache::Initialize stage=edram_buffer");
 
   bool draw_resolution_scaled = IsDrawResolutionScaled();
 
@@ -616,32 +624,17 @@ bool VulkanRenderTargetCache::Initialize(uint32_t shared_memory_binding_count) {
   create_direct_resolve_pipeline_layout(descriptor_set_layout_sampled_image_x2_,
                                         &direct_resolve_pipeline_layout_depth_);
 
-  // Resolve copy pipelines.
+#if REX_PLATFORM_MACOS
+  REXGPU_INFO("VulkanRenderTargetCache::Initialize stage=resolve_copy_pipelines_lazy");
+#else
+  REXGPU_INFO("VulkanRenderTargetCache::Initialize stage=resolve_copy_pipelines_eager");
   for (size_t i = 0; i < size_t(draw_util::ResolveCopyShaderIndex::kCount); ++i) {
-    const draw_util::ResolveCopyShaderInfo& resolve_copy_shader_info =
-        draw_util::resolve_copy_shader_info[i];
-    const ResolveCopyShaderCode& resolve_copy_shader_code = kResolveCopyShaders[i];
-    // Somewhat verification whether resolve_copy_shaders_ is up to date.
-    assert_true(resolve_copy_shader_code.unscaled && resolve_copy_shader_code.unscaled_size_bytes &&
-                resolve_copy_shader_code.scaled && resolve_copy_shader_code.scaled_size_bytes);
-    VkPipeline resolve_copy_pipeline = ui::vulkan::util::CreateComputePipeline(
-        vulkan_device, resolve_copy_pipeline_layout_,
-        draw_resolution_scaled ? resolve_copy_shader_code.scaled
-                               : resolve_copy_shader_code.unscaled,
-        draw_resolution_scaled ? resolve_copy_shader_code.scaled_size_bytes
-                               : resolve_copy_shader_code.unscaled_size_bytes);
-    if (resolve_copy_pipeline == VK_NULL_HANDLE) {
-      REXGPU_ERROR(
-          "VulkanRenderTargetCache: Failed to create the resolve copy "
-          "pipeline {}",
-          resolve_copy_shader_info.debug_name);
+    if (EnsureResolveCopyPipeline(draw_util::ResolveCopyShaderIndex(i)) == VK_NULL_HANDLE) {
       Shutdown();
       return false;
     }
-    vulkan_device->SetObjectName(VK_OBJECT_TYPE_PIPELINE, resolve_copy_pipeline,
-                                 resolve_copy_shader_info.debug_name);
-    resolve_copy_pipelines_[i] = resolve_copy_pipeline;
   }
+#endif
 
   if (path_ == Path::kHostRenderTargets) {
     // Host render targets.
@@ -682,27 +675,17 @@ bool VulkanRenderTargetCache::Initialize(uint32_t shared_memory_binding_count) {
       Shutdown();
       return false;
     }
-    const std::pair<const uint32_t*, size_t> host_depth_store_shaders[] = {
-        {shaders::host_depth_store_1xmsaa_cs, sizeof(shaders::host_depth_store_1xmsaa_cs)},
-        {shaders::host_depth_store_2xmsaa_cs, sizeof(shaders::host_depth_store_2xmsaa_cs)},
-        {shaders::host_depth_store_4xmsaa_cs, sizeof(shaders::host_depth_store_4xmsaa_cs)},
-    };
-    for (size_t i = 0; i < rex::countof(host_depth_store_shaders); ++i) {
-      const std::pair<const uint32_t*, size_t> host_depth_store_shader =
-          host_depth_store_shaders[i];
-      VkPipeline host_depth_store_pipeline = ui::vulkan::util::CreateComputePipeline(
-          vulkan_device, host_depth_store_pipeline_layout_, host_depth_store_shader.first,
-          host_depth_store_shader.second);
-      if (host_depth_store_pipeline == VK_NULL_HANDLE) {
-        REXGPU_ERROR(
-            "VulkanRenderTargetCache: Failed to create the {}-sample host "
-            "depth storing pipeline",
-            uint32_t(1) << i);
+#if REX_PLATFORM_MACOS
+    REXGPU_INFO("VulkanRenderTargetCache::Initialize stage=host_depth_store_pipelines_lazy");
+#else
+    REXGPU_INFO("VulkanRenderTargetCache::Initialize stage=host_depth_store_pipelines_eager");
+    for (uint32_t i = 0; i <= uint32_t(xenos::MsaaSamples::k4X); ++i) {
+      if (EnsureHostDepthStorePipeline(xenos::MsaaSamples(i)) == VK_NULL_HANDLE) {
         Shutdown();
         return false;
       }
-      host_depth_store_pipelines_[i] = host_depth_store_pipeline;
     }
+#endif
 
     // Transfer and clear vertex buffer, for quads of up to tile granularity.
     transfer_vertex_buffer_pool_ = std::make_unique<ui::vulkan::VulkanUploadBufferPool>(
@@ -784,6 +767,7 @@ bool VulkanRenderTargetCache::Initialize(uint32_t shared_memory_binding_count) {
         return false;
       }
     }
+    REXGPU_INFO("VulkanRenderTargetCache::Initialize stage=transfer_pipeline_layouts");
 
     // Dump pipeline layouts.
     VkDescriptorSetLayout dump_pipeline_layout_descriptor_set_layouts[kDumpDescriptorSetCount];
@@ -969,6 +953,7 @@ bool VulkanRenderTargetCache::Initialize(uint32_t shared_memory_binding_count) {
   last_update_framebuffer_ = VK_NULL_HANDLE;
 
   InitializeCommon();
+  REXGPU_INFO("VulkanRenderTargetCache::Initialize stage=complete");
   return true;
 }
 
@@ -1095,7 +1080,79 @@ void VulkanRenderTargetCache::Shutdown(bool from_destructor) {
   }
 }
 
+VkPipeline VulkanRenderTargetCache::EnsureResolveCopyPipeline(
+    draw_util::ResolveCopyShaderIndex shader_index) {
+  size_t shader_index_int = size_t(shader_index);
+  if (shader_index_int >= resolve_copy_pipelines_.size()) {
+    return VK_NULL_HANDLE;
+  }
+  VkPipeline& resolve_copy_pipeline = resolve_copy_pipelines_[shader_index_int];
+  if (resolve_copy_pipeline != VK_NULL_HANDLE) {
+    return resolve_copy_pipeline;
+  }
+
+  const auto* vulkan_device = command_processor_.GetVulkanDevice();
+  const draw_util::ResolveCopyShaderInfo& resolve_copy_shader_info =
+      draw_util::resolve_copy_shader_info[shader_index_int];
+  const ResolveCopyShaderCode& resolve_copy_shader_code = kResolveCopyShaders[shader_index_int];
+  assert_true(resolve_copy_shader_code.unscaled && resolve_copy_shader_code.unscaled_size_bytes &&
+              resolve_copy_shader_code.scaled && resolve_copy_shader_code.scaled_size_bytes);
+
+  bool draw_resolution_scaled = IsDrawResolutionScaled();
+  REXGPU_INFO("VulkanRenderTargetCache: Lazily creating resolve copy pipeline {}",
+              resolve_copy_shader_info.debug_name);
+  resolve_copy_pipeline = ui::vulkan::util::CreateComputePipeline(
+      vulkan_device, resolve_copy_pipeline_layout_,
+      draw_resolution_scaled ? resolve_copy_shader_code.scaled : resolve_copy_shader_code.unscaled,
+      draw_resolution_scaled ? resolve_copy_shader_code.scaled_size_bytes
+                             : resolve_copy_shader_code.unscaled_size_bytes);
+  if (resolve_copy_pipeline == VK_NULL_HANDLE) {
+    REXGPU_ERROR("VulkanRenderTargetCache: Failed to create the resolve copy pipeline {}",
+                 resolve_copy_shader_info.debug_name);
+    return VK_NULL_HANDLE;
+  }
+  vulkan_device->SetObjectName(VK_OBJECT_TYPE_PIPELINE, resolve_copy_pipeline,
+                               resolve_copy_shader_info.debug_name);
+  return resolve_copy_pipeline;
+}
+
+VkPipeline VulkanRenderTargetCache::EnsureHostDepthStorePipeline(xenos::MsaaSamples msaa_samples) {
+  size_t msaa_index = size_t(msaa_samples);
+  if (msaa_index >= rex::countof(host_depth_store_pipelines_)) {
+    return VK_NULL_HANDLE;
+  }
+  VkPipeline& host_depth_store_pipeline = host_depth_store_pipelines_[msaa_index];
+  if (host_depth_store_pipeline != VK_NULL_HANDLE) {
+    return host_depth_store_pipeline;
+  }
+
+  static constexpr std::pair<const uint32_t*, size_t> kHostDepthStoreShaders[] = {
+      {shaders::host_depth_store_1xmsaa_cs, sizeof(shaders::host_depth_store_1xmsaa_cs)},
+      {shaders::host_depth_store_2xmsaa_cs, sizeof(shaders::host_depth_store_2xmsaa_cs)},
+      {shaders::host_depth_store_4xmsaa_cs, sizeof(shaders::host_depth_store_4xmsaa_cs)},
+  };
+  if (msaa_index >= rex::countof(kHostDepthStoreShaders)) {
+    return VK_NULL_HANDLE;
+  }
+
+  const auto* vulkan_device = command_processor_.GetVulkanDevice();
+  const auto& host_depth_store_shader = kHostDepthStoreShaders[msaa_index];
+  REXGPU_INFO("VulkanRenderTargetCache: Lazily creating {}-sample host depth store pipeline",
+              uint32_t(1) << msaa_index);
+  host_depth_store_pipeline = ui::vulkan::util::CreateComputePipeline(
+      vulkan_device, host_depth_store_pipeline_layout_, host_depth_store_shader.first,
+      host_depth_store_shader.second);
+  if (host_depth_store_pipeline == VK_NULL_HANDLE) {
+    REXGPU_ERROR("VulkanRenderTargetCache: Failed to create the {}-sample host depth storing "
+                 "pipeline",
+                 uint32_t(1) << msaa_index);
+    return VK_NULL_HANDLE;
+  }
+  return host_depth_store_pipeline;
+}
+
 void VulkanRenderTargetCache::ClearCache() {
+  direct_swap_source_ = {};
   const ui::vulkan::VulkanDevice* const vulkan_device = command_processor_.GetVulkanDevice();
   const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
   const VkDevice device = vulkan_device->device();
@@ -1115,6 +1172,15 @@ void VulkanRenderTargetCache::ClearCache() {
   render_passes_.clear();
 
   RenderTargetCache::ClearCache();
+}
+
+bool VulkanRenderTargetCache::GetDirectSwapSource(uint32_t frontbuffer_ptr,
+                                                  DirectSwapSource& source_out) const {
+  if (!direct_swap_source_.valid() || direct_swap_source_.base_address != frontbuffer_ptr) {
+    return false;
+  }
+  source_out = direct_swap_source_;
+  return true;
 }
 
 void VulkanRenderTargetCache::CompletedSubmissionUpdated() {
@@ -1334,6 +1400,7 @@ bool VulkanRenderTargetCache::Resolve(const memory::Memory& memory,
                                       uint32_t& written_address_out, uint32_t& written_length_out) {
   written_address_out = 0;
   written_length_out = 0;
+  direct_swap_source_ = {};
 
   bool draw_resolution_scaled = IsDrawResolutionScaled();
 
@@ -1464,8 +1531,11 @@ bool VulkanRenderTargetCache::Resolve(const memory::Memory& memory,
                                                             uint32_t(copy_dest_use_length)));
           }
           UseEdramBuffer(EdramBufferUsage::kComputeRead);
-          command_processor_.BindExternalComputePipeline(
-              resolve_copy_pipelines_[size_t(copy_shader)]);
+          VkPipeline resolve_copy_pipeline = EnsureResolveCopyPipeline(copy_shader);
+          if (resolve_copy_pipeline == VK_NULL_HANDLE) {
+            return false;
+          }
+          command_processor_.BindExternalComputePipeline(resolve_copy_pipeline);
           VkDescriptorSet descriptor_sets[kResolveCopyDescriptorSetCount] = {};
           descriptor_sets[kResolveCopyDescriptorSetEdram] = edram_storage_buffer_descriptor_set_;
           descriptor_sets[kResolveCopyDescriptorSetDest] = descriptor_set_dest;
@@ -1494,6 +1564,36 @@ bool VulkanRenderTargetCache::Resolve(const memory::Memory& memory,
                                             resolve_info.copy_dest_extent_length);
           written_address_out = resolve_info.copy_dest_extent_start;
           written_length_out = resolve_info.copy_dest_extent_length;
+          if (GetPath() == Path::kHostRenderTargets &&
+              resolve_info.rb_copy_control.copy_src_select < xenos::kMaxColorRenderTargets &&
+              resolve_info.copy_dest_coordinate_info.offset_x_div_8 == 0 &&
+              resolve_info.copy_dest_coordinate_info.offset_y_div_8 == 0 &&
+              resolve_info.copy_dest_info.copy_dest_array == 0 &&
+              resolve_info.copy_dest_info.copy_dest_slice == 0) {
+            const RenderTarget* source_render_target =
+                last_update_framebuffer_attachments_[1 + resolve_info.rb_copy_control.copy_src_select];
+            const auto* source_vulkan_rt =
+                source_render_target ? static_cast<const VulkanRenderTarget*>(source_render_target)
+                                     : nullptr;
+            if (source_vulkan_rt != nullptr &&
+                source_vulkan_rt->key().msaa_samples == xenos::MsaaSamples::k1X &&
+                xenos::IsColorResolveFormatBitwiseEquivalent(
+                    source_vulkan_rt->key().GetColorFormat(),
+                    xenos::ColorFormat(resolve_info.copy_dest_info.copy_dest_format))) {
+              direct_swap_source_.image_view = source_vulkan_rt->view_color_transfer();
+              direct_swap_source_.base_address = resolve_info.copy_dest_base;
+              direct_swap_source_.width_unscaled =
+                  resolve_info.coordinate_info.width_div_8 << xenos::kResolveAlignmentPixelsLog2;
+              direct_swap_source_.height_unscaled =
+                  resolve_info.height_div_8 << xenos::kResolveAlignmentPixelsLog2;
+              direct_swap_source_.width_scaled =
+                  direct_swap_source_.width_unscaled * draw_resolution_scale_x();
+              direct_swap_source_.height_scaled =
+                  direct_swap_source_.height_unscaled * draw_resolution_scale_y();
+              direct_swap_source_.format =
+                  xenos::TextureFormat(resolve_info.copy_dest_info.copy_dest_format);
+            }
+          }
           copied = true;
         }
       }
@@ -1520,8 +1620,10 @@ bool VulkanRenderTargetCache::Resolve(const memory::Memory& memory,
           clear_values[0] = resolve_info.rb_depth_clear;
           clear_values[1] =
               resolve_info.rb_color_clear | (uint64_t(resolve_info.rb_color_clear_lo) << 32);
-          PerformTransfersAndResolveClears(2, clear_render_targets, clear_transfers_, clear_values,
-                                           &clear_rectangle);
+          if (!PerformTransfersAndResolveClears(2, clear_render_targets, clear_transfers_,
+                                                clear_values, &clear_rectangle)) {
+            return false;
+          }
         }
         cleared = true;
       } break;
@@ -1601,8 +1703,11 @@ bool VulkanRenderTargetCache::Update(bool is_rasterization_done,
       RenderTarget* const* depth_and_color_render_targets =
           last_update_accumulated_render_targets();
 
-      PerformTransfersAndResolveClears(1 + xenos::kMaxColorRenderTargets,
-                                       depth_and_color_render_targets, last_update_transfers());
+      if (!PerformTransfersAndResolveClears(1 + xenos::kMaxColorRenderTargets,
+                                            depth_and_color_render_targets,
+                                            last_update_transfers())) {
+        return false;
+      }
 
       if (depth_and_color_render_targets[0]) {
         render_pass_key.depth_and_color_used |= 1 << 0;
@@ -1721,7 +1826,9 @@ void VulkanRenderTargetCache::GetLastUpdateRenderingAttachments(
     VkRenderingAttachmentInfo* depth_attachment,
     VkRenderingAttachmentInfo* stencil_attachment) const {
   RenderPassKey key = last_update_render_pass_key_;
-  RenderTarget* const* rts = last_update_accumulated_render_targets();
+  RenderTarget* const* rts = GetPath() == Path::kHostRenderTargets
+                                 ? last_update_accumulated_render_targets()
+                                 : last_update_used_render_targets();
 
   std::memset(depth_attachment, 0, sizeof(VkRenderingAttachmentInfo));
   std::memset(stencil_attachment, 0, sizeof(VkRenderingAttachmentInfo));
@@ -4750,7 +4857,7 @@ VkPipeline const* VulkanRenderTargetCache::GetTransferPipelines(TransferPipeline
   return transfer_pipelines_.emplace(key, pipelines).first->second.data();
 }
 
-void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
+bool VulkanRenderTargetCache::PerformTransfersAndResolveClears(
     uint32_t render_target_count, RenderTarget* const* render_targets,
     const std::vector<Transfer>* render_target_transfers,
     const uint64_t* render_target_resolve_clear_values,
@@ -4798,8 +4905,12 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
       }
       if (!host_depth_store_set_up) {
         // Pipeline.
-        command_processor_.BindExternalComputePipeline(
-            host_depth_store_pipelines_[size_t(dest_rt_key.msaa_samples)]);
+        VkPipeline host_depth_store_pipeline =
+            EnsureHostDepthStorePipeline(dest_rt_key.msaa_samples);
+        if (host_depth_store_pipeline == VK_NULL_HANDLE) {
+          return false;
+        }
+        command_processor_.BindExternalComputePipeline(host_depth_store_pipeline);
         // Descriptor set bindings.
         VkDescriptorSet host_depth_store_descriptor_sets[] = {
             edram_storage_buffer_descriptor_set_,
@@ -5609,6 +5720,7 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
       command_buffer.CmdVkClearAttachments(1, &resolve_clear_attachment, 1, &resolve_clear_rect);
     }
   }
+  return true;
 }
 
 VkPipeline VulkanRenderTargetCache::GetDumpPipeline(DumpPipelineKey key) {
@@ -6169,7 +6281,7 @@ VkPipeline VulkanRenderTargetCache::GetDirectResolvePipeline(DirectResolvePipeli
   // direct preflight path.
   size_t copy_shader_index = size_t(key.copy_shader);
   if (copy_shader_index < size_t(draw_util::ResolveCopyShaderIndex::kCount)) {
-    pipeline = resolve_copy_pipelines_[copy_shader_index];
+    pipeline = EnsureResolveCopyPipeline(key.copy_shader);
   }
   direct_resolve_pipelines_.emplace(key, pipeline);
   return pipeline;
