@@ -16,6 +16,9 @@
 #include <iostream>
 
 #include <fcntl.h>
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#endif
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -51,10 +54,23 @@ std::filesystem::path to_path(const std::u16string_view source) {
 namespace filesystem {
 
 std::filesystem::path GetExecutablePath() {
+#if REX_PLATFORM_MACOS
+  uint32_t buffer_size = 0;
+  _NSGetExecutablePath(nullptr, &buffer_size);
+  std::string buffer(buffer_size, '\0');
+  if (_NSGetExecutablePath(buffer.data(), &buffer_size) != 0) {
+    return {};
+  }
+  if (!buffer.empty() && buffer.back() == '\0') {
+    buffer.pop_back();
+  }
+  return std::filesystem::weakly_canonical(buffer);
+#else
   char buff[FILENAME_MAX] = "";
   readlink("/proc/self/exe", buff, FILENAME_MAX);
   std::string s(buff);
   return s;
+#endif
 }
 
 std::filesystem::path GetExecutableFolder() {

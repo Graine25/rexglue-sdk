@@ -32,8 +32,12 @@ uint64_t Clock::host_tick_frequency_platform() {
   assert_zero(error);
   assert_zero(res.tv_sec);  // Sub second resolution is required.
 
-  // Convert nano seconds to hertz. Resolution is 1ns on most systems.
-  return 1000000000ull / res.tv_nsec;
+  assert_true(res.tv_nsec > 0);
+
+  // clock_gettime returns nanoseconds in host_tick_count_platform(), so the
+  // matching tick frequency is always 1 GHz regardless of the clock's reported
+  // resolution.
+  return 1000000000ull;
 }
 
 uint64_t Clock::host_tick_count_platform() {
