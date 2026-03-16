@@ -42,6 +42,15 @@ uint32_t get_page_count(uint32_t value, uint32_t page_size, uint32_t page_size_s
   return rex::round_up(value, page_size) >> page_size_shift;
 }
 
+constexpr uint64_t kGuestMemoryMappingSize = 0x120000000ull;
+
+#if REX_PLATFORM_MACOS
+uint64_t GetMacGuestMemoryReservationSize(uint32_t system_allocation_granularity) {
+  return rex::round_up(kGuestMemoryMappingSize + uint64_t(system_allocation_granularity),
+                       uint64_t(system_allocation_granularity));
+}
+#endif
+
 /**
  * Memory map:
  * 0x00000000 - 0x3FFFFFFF (1024mb) - virtual 4k pages
@@ -128,13 +137,16 @@ Memory::~Memory() {
 
 bool Memory::Initialize() {
   file_name_ = fmt::format("xenia_memory_{}", chrono::Clock::QueryHostTickCount());
+#if REX_PLATFORM_MACOS
+  const uint64_t mapping_size = GetMacGuestMemoryReservationSize(system_allocation_granularity_);
+#else
+  const uint64_t mapping_size = kGuestMemoryMappingSize;
+#endif
 
   // Create main page file-backed mapping. This is all reserved but
   // uncommitted (so it shouldn't expand page file).
-  mapping_ =
-      rex::memory::CreateFileMappingHandle(file_name_,
-                                           // entire 4gb space + 512mb physical:
-                                           0x11FFFFFFF, rex::memory::PageAccess::kReadWrite, false);
+  mapping_ = rex::memory::CreateFileMappingHandle(
+      file_name_, mapping_size, rex::memory::PageAccess::kReadWrite, false);
   if (mapping_ == rex::memory::kFileMappingHandleInvalid) {
     REXSYS_ERROR("Unable to reserve the 4gb guest address space.");
     assert_always();
@@ -144,6 +156,13 @@ bool Memory::Initialize() {
   // Attempt to create our views. This may fail at the first address
   // we pick, so try a few times.
   mapping_base_ = 0;
+#if REX_PLATFORM_MACOS
+  if (MapViewsMac()) {
+    REXSYS_ERROR("Unable to reserve and map a continuous guest range on macOS.");
+    assert_always();
+    return false;
+  }
+#else
   for (size_t n = 32; n < 64; n++) {
     auto mapping_base = reinterpret_cast<uint8_t*>(1ull << n);
     if (!MapViews(mapping_base)) {
@@ -156,6 +175,7 @@ bool Memory::Initialize() {
     assert_always();
     return false;
   }
+#endif
   virtual_membase_ = mapping_base_;
   physical_membase_ = mapping_base_ + 0x100000000ull;
 
@@ -290,6 +310,26 @@ static const struct {
         0x0000000100000000ull,
     },
 };
+
+int Memory::MapViewsMac() {
+  const auto mapping_size =
+      static_cast<size_t>(GetMacGuestMemoryReservationSize(system_allocation_granularity_));
+  auto reserved_base = reinterpret_cast<uint8_t*>(rex::memory::AllocFixed(
+      nullptr, mapping_size, rex::memory::AllocationType::kReserve,
+      rex::memory::PageAccess::kNoAccess));
+  if (!reserved_base) {
+    return 1;
+  }
+
+  if (MapViews(reserved_base)) {
+    rex::memory::DeallocFixed(reserved_base, mapping_size, rex::memory::DeallocationType::kRelease);
+    return 1;
+  }
+
+  mapping_base_ = reserved_base;
+  return 0;
+}
+
 int Memory::MapViews(uint8_t* mapping_base) {
   assert_true(rex::countof(map_info) == rex::countof(views_.all_views));
   // 0xE0000000 4 KB offset is emulated via host_address_offset and on the CPU
@@ -314,6 +354,7 @@ void Memory::UnmapViews() {
     if (views_.all_views[n]) {
       size_t length = map_info[n].virtual_address_end - map_info[n].virtual_address_start + 1;
       rex::memory::UnmapFileView(mapping_, views_.all_views[n], length);
+      views_.all_views[n] = nullptr;
     }
   }
 }
@@ -850,11 +891,13 @@ bool BaseHeap::SyncHostPageAccess(uint32_t start_page_number, uint32_t end_page_
 
     bool has_read = false;
     bool has_write = false;
+    bool has_committed = false;
     for (uint32_t page_number = guest_page_start; page_number <= guest_page_end; ++page_number) {
       const auto& page_entry = page_table_[page_number];
       if (!(page_entry.state & memory::kMemoryAllocationCommit)) {
         continue;
       }
+      has_committed = true;
       if (page_entry.current_protect & memory::kMemoryProtectRead) {
         has_read = true;
       }
@@ -864,6 +907,15 @@ bool BaseHeap::SyncHostPageAccess(uint32_t start_page_number, uint32_t end_page_
         has_write = true;
         break;
       }
+    }
+
+    // On 4 KB host-page platforms, releasing physical memory with
+    // protect_on_release disabled leaves the old host mapping accessible.
+    // Preserve that behavior on larger host pages too, rather than
+    // accidentally turning fully free physical alias pages into no-access.
+    if (!has_committed && heap_type_ == memory::HeapType::kGuestPhysical &&
+        !REXCVAR_GET(protect_on_release)) {
+      return rex::memory::PageAccess::kReadWrite;
     }
 
     if (!has_read) {

@@ -509,6 +509,7 @@ class Memory {
   bool HasFunctionTable() const { return function_table_base_ != 0; }
 
  private:
+  int MapViewsMac();
   int MapViews(uint8_t* mapping_base);
   void UnmapViews();
 

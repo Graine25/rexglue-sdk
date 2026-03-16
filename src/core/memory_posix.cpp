@@ -213,6 +213,30 @@ void* AllocFixed(void* base_address, size_t length, AllocationType allocation_ty
   // - New allocation: mmap with MAP_FIXED_NOREPLACE (never silently replace)
   const uint32_t prot_requested = ToPosixProtectFlags(access);
 
+#if REX_PLATFORM_MACOS
+  // On macOS, fixed guest memory often already exists as a shared file view.
+  // "Committing" into that range must only change protection, otherwise
+  // MAP_FIXED will replace the shared mapping with private anonymous pages and
+  // split physical aliases apart.
+  if (base_address &&
+      (allocation_type == AllocationType::kCommit ||
+       allocation_type == AllocationType::kReserveCommit)) {
+    const size_t system_page_size = page_size();
+    const uintptr_t start = reinterpret_cast<uintptr_t>(base_address);
+    const uintptr_t aligned_start = start & ~(system_page_size - 1);
+    const uintptr_t aligned_end = rex::align(start + length, system_page_size);
+    const size_t aligned_length = aligned_end > aligned_start ? aligned_end - aligned_start : 0;
+    if (!aligned_length) {
+      return base_address;
+    }
+    if (mprotect(reinterpret_cast<void*>(aligned_start), aligned_length,
+                 static_cast<int>(prot_requested)) == 0) {
+      return base_address;
+    }
+    return nullptr;
+  }
+#endif
+
   // Determine initial protection based on allocation type
   int prot_initial = 0;
   switch (allocation_type) {
