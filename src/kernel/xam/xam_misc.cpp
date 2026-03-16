@@ -9,8 +9,32 @@
  */
 
 #include <rex/kernel/xam/private.h>
+#include <rex/kernel/xboxkrnl/error.h>
 #include <rex/logging.h>
 #include <rex/ppc/function.h>
+#include <rex/system/xthread.h>
+
+namespace rex::kernel::xam {
+
+ppc_u32_result_t GetCurrentThreadId_entry() {
+  return system::XThread::GetCurrentThreadId();
+}
+
+ppc_u32_result_t GetLastError_entry() { return system::XThread::GetLastError(); }
+
+void SetLastError_entry(ppc_u32_t error_code) { system::XThread::SetLastError(error_code); }
+
+ppc_u32_result_t RtlGetLastError_entry() { return system::XThread::GetLastError(); }
+
+void RtlSetLastError_entry(ppc_u32_t error_code) {
+  system::XThread::SetLastError(error_code);
+}
+
+void RtlSetLastNTError_entry(ppc_u32_t status) {
+  system::XThread::SetLastError(xboxkrnl::xeRtlNtStatusToDosError(status));
+}
+
+}  // namespace rex::kernel::xam
 
 // kinda gross but oh well
 XAM_EXPORT_STUB(__imp__CancelWaitableTimer);
@@ -116,8 +140,8 @@ XAM_EXPORT_STUB(__imp__GamerCardRegisterControls);
 XAM_EXPORT_STUB(__imp__GamerCardStartup);
 XAM_EXPORT_STUB(__imp__GamerCardUnregisterControls);
 XAM_EXPORT_STUB(__imp__GetCodecVersion);
-XAM_EXPORT_STUB(__imp__GetCurrentThreadId);
-XAM_EXPORT_STUB(__imp__GetLastError);
+XAM_EXPORT(__imp__GetCurrentThreadId, rex::kernel::xam::GetCurrentThreadId_entry)
+XAM_EXPORT(__imp__GetLastError, rex::kernel::xam::GetLastError_entry)
 XAM_EXPORT_STUB(__imp__GetLocalTime);
 XAM_EXPORT_STUB(__imp__GetModuleHandleA);
 XAM_EXPORT_STUB(__imp__GetOverlappedResult);
@@ -165,15 +189,15 @@ XAM_EXPORT_STUB(__imp__RtlFindNextFile);
 XAM_EXPORT_STUB(__imp__RtlFreeHeap);
 XAM_EXPORT_STUB(__imp__RtlFreeHeapSlowly);
 XAM_EXPORT_STUB(__imp__RtlGetAttributesOnHeapAlloc);
-XAM_EXPORT_STUB(__imp__RtlGetLastError);
+XAM_EXPORT(__imp__RtlGetLastError, rex::kernel::xam::RtlGetLastError_entry)
 XAM_EXPORT_STUB(__imp__RtlGetModuleFileName);
 XAM_EXPORT_STUB(__imp__RtlLockHeap);
 XAM_EXPORT_STUB(__imp__RtlRandom);
 XAM_EXPORT_STUB(__imp__RtlReAllocateHeap);
 XAM_EXPORT_STUB(__imp__RtlRemoveDirectory);
 XAM_EXPORT_STUB(__imp__RtlSetAttributesOnHeapAlloc);
-XAM_EXPORT_STUB(__imp__RtlSetLastError);
-XAM_EXPORT_STUB(__imp__RtlSetLastNTError);
+XAM_EXPORT(__imp__RtlSetLastError, rex::kernel::xam::RtlSetLastError_entry)
+XAM_EXPORT(__imp__RtlSetLastNTError, rex::kernel::xam::RtlSetLastNTError_entry)
 XAM_EXPORT_STUB(__imp__RtlSizeHeap);
 XAM_EXPORT_STUB(__imp__RtlSleep);
 XAM_EXPORT_STUB(__imp__RtlUniform);
@@ -182,7 +206,7 @@ XAM_EXPORT_STUB(__imp__RtlValidateHeap);
 XAM_EXPORT_STUB(__imp__RtlWalkHeap);
 XAM_EXPORT_STUB(__imp__RtlZeroHeap);
 XAM_EXPORT_STUB(__imp__SetEvent);
-XAM_EXPORT_STUB(__imp__SetLastError);
+XAM_EXPORT(__imp__SetLastError, rex::kernel::xam::SetLastError_entry)
 XAM_EXPORT_STUB(__imp__SetUnhandledExceptionFilter);
 XAM_EXPORT_STUB(__imp__SetWaitableTimer);
 XAM_EXPORT_STUB(__imp__Sleep);

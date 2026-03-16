@@ -405,8 +405,12 @@ void RtlEnterCriticalSection_entry(ppc_ptr_t<X_RTL_CRITICAL_SECTION> cs) {
   }
 
   if (rex::thread::atomic_inc(&cs->lock_count) != 0) {
-    // Create a full waiter.
-    xeKeWaitForSingleObject(reinterpret_cast<void*>(cs.host_address()), 8, 0, 0, nullptr);
+    if (cs->owning_thread == 0) {
+      // Recover abandoned sections by letting the current thread take ownership.
+    } else {
+      // Create a full waiter.
+      xeKeWaitForSingleObject(reinterpret_cast<void*>(cs.host_address()), 8, 0, 0, nullptr);
+    }
   }
 
   assert_true(cs->owning_thread == 0);
