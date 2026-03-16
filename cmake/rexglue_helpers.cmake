@@ -23,6 +23,8 @@ function (rexglue_configure_target target_name)
   # Platform entry point
   if (WIN32)
     target_sources(${target_name} PRIVATE ${REXGLUE_SHARE_DIR}/windowed_app_main_win.cpp)
+  elseif (APPLE)
+    target_sources(${target_name} PRIVATE ${REXGLUE_SHARE_DIR}/windowed_app_main_macos.cpp)
   else ()
     target_sources(${target_name} PRIVATE ${REXGLUE_SHARE_DIR}/windowed_app_main_posix.cpp)
   endif ()

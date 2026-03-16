@@ -51,6 +51,15 @@ install(TARGETS ${REXGLUE_INSTALL_TARGETS}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
+# MoltenVK's upstream CMake target graph is not export-safe in this vendored
+# layout, so install the runtime separately on Apple platforms.
+if(APPLE AND TARGET MoltenVK)
+    install(TARGETS MoltenVK
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    )
+endif()
+
 if(REXGLUE_INSTALL_FIDELITYFX_TARGETS)
     install(TARGETS ${REXGLUE_INSTALL_FIDELITYFX_TARGETS}
         EXPORT rexglueTargets
@@ -117,6 +126,7 @@ endif()
 # Install platform entry point sources and ReXApp for SDK consumers
 install(FILES
     src/ui/windowed_app_main_win.cpp
+    src/ui/windowed_app_main_macos.cpp
     src/ui/windowed_app_main_posix.cpp
     src/ui/rex_app.cpp
     DESTINATION ${CMAKE_INSTALL_DATADIR}/rexglue
