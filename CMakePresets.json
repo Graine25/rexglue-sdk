@@ -14,8 +14,6 @@
             "cacheVariables": {
                 "CMAKE_C_COMPILER": "clang",
                 "CMAKE_CXX_COMPILER": "clang++",
-                "CMAKE_C_FLAGS": "-march=x86-64-v3",
-                "CMAKE_CXX_FLAGS": "-march=x86-64-v3",
                 "CMAKE_CXX_STANDARD": "23",
                 "CMAKE_CONFIGURATION_TYPES": "Debug;Release;RelWithDebInfo",
                 "CMAKE_CROSS_CONFIGS": "all",
@@ -35,8 +33,8 @@
             "generator": "Ninja Multi-Config",
             "binaryDir": "${sourceDir}/out/build/${presetName}",
             "cacheVariables": {
-                "CMAKE_C_COMPILER": "clang",
-                "CMAKE_CXX_COMPILER": "clang++",
+                "CMAKE_C_COMPILER": "clang-20",
+                "CMAKE_CXX_COMPILER": "clang++-20",
                 "CMAKE_CXX_STANDARD": "23",
                 "CMAKE_CONFIGURATION_TYPES": "Debug;Release;RelWithDebInfo",
                 "CMAKE_CROSS_CONFIGS": "all",
@@ -53,11 +51,7 @@
         {
             "name": "linux-arm64-base",
             "hidden": true,
-            "inherits": "linux-base",
-            "cacheVariables": {
-                "CMAKE_C_FLAGS": "-march=armv8-a",
-                "CMAKE_CXX_FLAGS": "-march=armv8-a"
-            }
+            "inherits": "linux-base"
         },
         {
             "name": "win-amd64",
@@ -69,11 +63,7 @@
             "name": "linux-amd64",
             "displayName": "Linux AMD64",
             "description": "Multi-config build for Linux AMD64 using Clang",
-            "inherits": "linux-base",
-            "cacheVariables": {
-                "CMAKE_C_FLAGS": "-march=x86-64-v3",
-                "CMAKE_CXX_FLAGS": "-march=x86-64-v3"
-            }
+            "inherits": "linux-base"
         },
         {
             "name": "linux-arm64",
@@ -87,11 +77,6 @@
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/build/${presetName}",
             "cacheVariables": {
-                "CMAKE_C_COMPILER": "/opt/homebrew/opt/llvm/bin/clang",
-                "CMAKE_CXX_COMPILER": "/opt/homebrew/opt/llvm/bin/clang++",
-                "CMAKE_C_FLAGS": "-march=armv8-a",
-                "CMAKE_CXX_FLAGS": "-march=armv8-a",
-                "CMAKE_OSX_ARCHITECTURES": "arm64",
                 "CMAKE_CXX_STANDARD": "23",
                 "CMAKE_OSX_ARCHITECTURES": "arm64",
                 "CMAKE_APPLE_SILICON_PROCESSOR": "arm64",
@@ -109,7 +94,7 @@
         {
             "name": "mac-arm64",
             "displayName": "macOS ARM64 RelWithDebInfo",
-            "description": "Release with Debug Info build for macOS ARM64 using Homebrew LLVM",
+            "description": "Release with Debug Info build for macOS ARM64",
             "inherits": "mac-arm64-base",
             "binaryDir": "${sourceDir}/build/mac-arm64",
             "cacheVariables": {
@@ -119,7 +104,7 @@
         {
             "name": "mac-arm64-debug",
             "displayName": "macOS ARM64 Debug",
-            "description": "Debug build for macOS ARM64 using Homebrew LLVM",
+            "description": "Debug build for macOS ARM64",
             "inherits": "mac-arm64-base",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug"
@@ -128,7 +113,7 @@
         {
             "name": "mac-arm64-release",
             "displayName": "macOS ARM64 Release",
-            "description": "Release build for macOS ARM64 using Homebrew LLVM",
+            "description": "Release build for macOS ARM64",
             "inherits": "mac-arm64-base",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release"
@@ -137,7 +122,7 @@
         {
             "name": "mac-arm64-relwithdebinfo",
             "displayName": "macOS ARM64 RelWithDebInfo",
-            "description": "Release with Debug Info build for macOS ARM64 using Homebrew LLVM",
+            "description": "Release with Debug Info build for macOS ARM64",
             "inherits": "mac-arm64-base",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "RelWithDebInfo"

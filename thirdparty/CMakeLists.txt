@@ -230,6 +230,9 @@ set(SNAPPY_INSTALL
 )
 add_subdirectory(snappy)
 target_compile_options(snappy PRIVATE -w)
+if (APPLE AND IS_ARM64)
+  target_compile_options(snappy PRIVATE -march=armv8-a+crc)
+endif ()
 
 #=============================================================================
 # utfcpp - UTF-8 string library (header-only)

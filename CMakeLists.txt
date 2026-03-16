@@ -77,13 +77,31 @@ if(UNIX AND NOT APPLE)
     set(CMAKE_INSTALL_RPATH_USE_LINK_PATH ON)
 endif()
 
-# Enforce Clang18 compiler
-if (NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-  message(FATAL_ERROR "ReXGlue requires Clang compiler. Please set CMAKE_CXX_COMPILER to clang++")
-endif ()
+# Enforce the default Clang toolchain, with AppleClang accepted only for
+# native macOS builds.
+if (APPLE)
+  if (NOT (CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR
+           CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang"))
+    message(FATAL_ERROR
+            "ReXGlue requires Clang or AppleClang on macOS. Please select a supported compiler.")
+  endif ()
 
-if (CMAKE_CXX_COMPILER_VERSION VERSION_LESS "18.0")
-  message(FATAL_ERROR "ReXGlue requires Clang 18 or newer (found ${CMAKE_CXX_COMPILER_VERSION})")
+  if (CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    if (CMAKE_CXX_COMPILER_VERSION VERSION_LESS "17.0")
+      message(FATAL_ERROR
+              "ReXGlue requires AppleClang 17 or newer (found ${CMAKE_CXX_COMPILER_VERSION})")
+    endif ()
+  elseif (CMAKE_CXX_COMPILER_VERSION VERSION_LESS "18.0")
+    message(FATAL_ERROR "ReXGlue requires Clang 18 or newer (found ${CMAKE_CXX_COMPILER_VERSION})")
+  endif ()
+else ()
+  if (NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    message(FATAL_ERROR "ReXGlue requires Clang. Please set CMAKE_CXX_COMPILER to clang++")
+  endif ()
+
+  if (CMAKE_CXX_COMPILER_VERSION VERSION_LESS "18.0")
+    message(FATAL_ERROR "ReXGlue requires Clang 18 or newer (found ${CMAKE_CXX_COMPILER_VERSION})")
+  endif ()
 endif ()
 
 # Set C++23 standard
