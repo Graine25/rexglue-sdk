@@ -340,6 +340,11 @@ bool VulkanPipelineCache::Initialize() {
     }
   }
 
+#if REX_PLATFORM_MAC
+  REXGPU_WARN(
+      "VulkanPipelineCache: Placeholder pixel shader compilation is disabled on macOS; "
+      "async placeholder hot-swap will be unavailable");
+#else
   std::vector<uint32_t> placeholder_pixel_shader_spirv;
   std::string placeholder_pixel_shader_compile_error;
   if (command_processor_.CompileGlslToSpirv(
@@ -357,6 +362,7 @@ bool VulkanPipelineCache::Initialize() {
         "VulkanPipelineCache: Failed to create placeholder pixel shader - "
         "async placeholder hot-swap will be unavailable");
   }
+#endif
 
   uint32_t logical_processor_count = rex::thread::logical_processor_count();
   if (!logical_processor_count) {
@@ -3496,6 +3502,31 @@ bool VulkanPipelineCache::EnsurePipelineCreated(const PipelineCreationArguments&
         uint32_t(description.tessellation_mode),
         creation_arguments.tessellation_patch_control_points, description.render_pass_key.key,
         uint32_t(use_dynamic_rendering));
+    // Dump failing SPIR-V for offline analysis (spirv-val / spirv-cross --msl).
+    {
+      const auto& vs_bin = creation_arguments.vertex_shader->translated_binary();
+      if (!vs_bin.empty()) {
+        auto vs_path = fmt::format("/tmp/failing_vs_{:016X}.spv",
+                                   creation_arguments.vertex_shader->shader().ucode_data_hash());
+        if (FILE* f = std::fopen(vs_path.c_str(), "wb")) {
+          std::fwrite(vs_bin.data(), 1, vs_bin.size(), f);
+          std::fclose(f);
+          REXGPU_ERROR("VulkanPipelineCache: Dumped failing VS SPIR-V to {}", vs_path);
+        }
+      }
+      if (creation_arguments.pixel_shader) {
+        const auto& ps_bin = creation_arguments.pixel_shader->translated_binary();
+        if (!ps_bin.empty()) {
+          auto ps_path = fmt::format("/tmp/failing_ps_{:016X}.spv",
+                                     creation_arguments.pixel_shader->shader().ucode_data_hash());
+          if (FILE* f = std::fopen(ps_path.c_str(), "wb")) {
+            std::fwrite(ps_bin.data(), 1, ps_bin.size(), f);
+            std::fclose(f);
+            REXGPU_ERROR("VulkanPipelineCache: Dumped failing PS SPIR-V to {}", ps_path);
+          }
+        }
+      }
+    }
     return false;
   }
   bool was_placeholder =
