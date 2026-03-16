@@ -201,6 +201,13 @@ bool ReXApp::OnInitialize() {
 
   // Launch module in background
   app_context().CallInUIThreadDeferred([this]() {
+#if REX_PLATFORM_MACOS
+    if (auto* input_system =
+            dynamic_cast<rex::input::InputSystem*>(runtime_ ? runtime_->input_system() : nullptr)) {
+      (void)rex::input::AttachDefaultInputDrivers(*input_system, window_.get(), false);
+    }
+#endif
+
     auto main_thread = runtime_->LaunchModule();
     if (!main_thread) {
       REXLOG_ERROR("Failed to launch module");

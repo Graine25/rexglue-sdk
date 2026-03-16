@@ -63,7 +63,9 @@ if(WIN32)
     )
 elseif(APPLE)
     set(REXUI_PLATFORM_SOURCES
-        window_stub.cpp
+        surface_macos.mm
+        window_macos.mm
+        windowed_app_context_macos.mm
     )
 else()
     set(REXUI_PLATFORM_SOURCES
@@ -145,7 +147,11 @@ if(WIN32)
         Shcore
     )
 elseif(APPLE)
-    # Compile-only Phase 1 path. Native macOS window integration is added later.
+    target_link_libraries(rexui PUBLIC
+        "-framework AppKit"
+        "-framework Foundation"
+        "-framework QuartzCore"
+    )
 else()
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(GTK3 REQUIRED gtk+-3.0)
