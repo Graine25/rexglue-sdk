@@ -162,6 +162,137 @@ inline std::string generate_rexglue_cmake(const AppNameParts& names, std::string
   return content;
 }
 
+inline std::string generate_cmake_presets() {
+  return R"json({
+    "version": 6,
+    "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+    "configurePresets": [
+      {
+        "name": "windows-base",
+        "hidden": true,
+        "generator": "Ninja",
+        "binaryDir": "${sourceDir}/out/build/${presetName}",
+        "cacheVariables": {
+          "CMAKE_C_COMPILER": "clang",
+          "CMAKE_CXX_COMPILER": "clang++"
+        },
+        "condition": {
+          "type": "equals",
+          "lhs": "${hostSystemName}",
+          "rhs": "Windows"
+        }
+      },
+      {
+        "name": "linux-base",
+        "hidden": true,
+        "generator": "Ninja",
+        "binaryDir": "${sourceDir}/out/build/${presetName}",
+        "cacheVariables": {
+          "CMAKE_C_COMPILER": "clang-20",
+          "CMAKE_CXX_COMPILER": "clang++-20"
+        },
+        "condition": {
+          "type": "equals",
+          "lhs": "${hostSystemName}",
+          "rhs": "Linux"
+        }
+      },
+      {
+        "name": "mac-arm64-base",
+        "hidden": true,
+        "generator": "Ninja",
+        "binaryDir": "${sourceDir}/out/build/${presetName}",
+        "condition": {
+          "type": "equals",
+          "lhs": "${hostSystemName}",
+          "rhs": "Darwin"
+        },
+        "cacheVariables": {
+          "CMAKE_OSX_ARCHITECTURES": "arm64",
+          "CMAKE_APPLE_SILICON_PROCESSOR": "arm64"
+        }
+      },
+      {
+        "name": "win-amd64-debug",
+        "displayName": "Windows AMD64 Debug",
+        "inherits": "windows-base",
+        "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+      },
+      {
+        "name": "win-amd64-release",
+        "displayName": "Windows AMD64 Release",
+        "inherits": "windows-base",
+        "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+      },
+      {
+        "name": "win-amd64-relwithdebinfo",
+        "displayName": "Windows AMD64 RelWithDebInfo",
+        "inherits": "windows-base",
+        "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" }
+      },
+      {
+        "name": "linux-amd64-debug",
+        "displayName": "Linux AMD64 Debug",
+        "inherits": "linux-base",
+        "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+      },
+      {
+        "name": "linux-amd64-release",
+        "displayName": "Linux AMD64 Release",
+        "inherits": "linux-base",
+        "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+      },
+      {
+        "name": "linux-amd64-relwithdebinfo",
+        "displayName": "Linux AMD64 RelWithDebInfo",
+        "inherits": "linux-base",
+        "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" }
+      },
+      {
+        "name": "mac-arm64-debug",
+        "displayName": "macOS ARM64 Debug",
+        "inherits": "mac-arm64-base",
+        "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+      },
+      {
+        "name": "mac-arm64-release",
+        "displayName": "macOS ARM64 Release",
+        "inherits": "mac-arm64-base",
+        "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+      },
+      {
+        "name": "mac-arm64-relwithdebinfo",
+        "displayName": "macOS ARM64 RelWithDebInfo",
+        "inherits": "mac-arm64-base",
+        "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" }
+      }
+    ],
+    "buildPresets": [
+      { "name": "win-amd64-debug", "configurePreset": "win-amd64-debug" },
+      { "name": "win-amd64-release", "configurePreset": "win-amd64-release" },
+      { "name": "win-amd64-relwithdebinfo", "configurePreset": "win-amd64-relwithdebinfo" },
+      { "name": "linux-amd64-debug", "configurePreset": "linux-amd64-debug" },
+      { "name": "linux-amd64-release", "configurePreset": "linux-amd64-release" },
+      { "name": "linux-amd64-relwithdebinfo", "configurePreset": "linux-amd64-relwithdebinfo" },
+      { "name": "mac-arm64-debug", "configurePreset": "mac-arm64-debug" },
+      { "name": "mac-arm64-release", "configurePreset": "mac-arm64-release" },
+      { "name": "mac-arm64-relwithdebinfo", "configurePreset": "mac-arm64-relwithdebinfo" }
+    ],
+    "testPresets": [
+      { "name": "win-amd64-debug", "configurePreset": "win-amd64-debug" },
+      { "name": "win-amd64-release", "configurePreset": "win-amd64-release" },
+      { "name": "win-amd64-relwithdebinfo", "configurePreset": "win-amd64-relwithdebinfo" },
+      { "name": "linux-amd64-debug", "configurePreset": "linux-amd64-debug" },
+      { "name": "linux-amd64-release", "configurePreset": "linux-amd64-release" },
+      { "name": "linux-amd64-relwithdebinfo", "configurePreset": "linux-amd64-relwithdebinfo" },
+      { "name": "mac-arm64-debug", "configurePreset": "mac-arm64-debug" },
+      { "name": "mac-arm64-release", "configurePreset": "mac-arm64-release" },
+      { "name": "mac-arm64-relwithdebinfo", "configurePreset": "mac-arm64-relwithdebinfo" }
+    ]
+  }
+)json";
+}
+
 inline std::string generate_app_header(const AppNameParts& names) {
   std::string class_name = names.pascal_case + "App";
   std::string content;
