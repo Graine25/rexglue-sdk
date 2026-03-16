@@ -141,16 +141,16 @@ struct arg_count_t {
 //=============================================================================
 // Physical Heap Offset (Windows Granularity Workaround)
 //=============================================================================
-// On Windows, allocation granularity is 64KB, so the 0x1000 file offset for
-// the 0xE0 physical heap gets masked away. We compensate by adding 0x1000
-// to host addresses when the guest address is >= 0xE0000000.
+// On platforms with allocation granularity bigger than 4 KB, the 0x1000 file
+// offset for the 0xE0 physical heap gets masked away. We compensate by adding
+// 0x1000 to host addresses when the guest address is >= 0xE0000000.
 
 namespace detail {
 constexpr uint32_t PhysicalHostOffset([[maybe_unused]] uint32_t guest_addr) noexcept {
-#if REX_PLATFORM_WIN32
+#if REX_PLATFORM_WIN32 || REX_PLATFORM_MACOS
   return (guest_addr >= 0xE0000000u) ? 0x1000u : 0u;
 #else
-  return 0u;  // Linux has 4KB granularity, file offset works directly
+  return 0u;  // 4 KB granularity keeps the file offset intact.
 #endif
 }
 }  // namespace detail
