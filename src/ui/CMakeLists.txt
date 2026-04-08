@@ -61,6 +61,12 @@ if(WIN32)
         window_win.cpp
         windowed_app_context_win.cpp
     )
+elseif(APPLE)
+    set(REXUI_PLATFORM_SOURCES
+        surface_macos.mm
+        window_macos.mm
+        windowed_app_context_macos.mm
+    )
 else()
     set(REXUI_PLATFORM_SOURCES
         surface_gnulinux.cpp
@@ -128,6 +134,9 @@ if(REXGLUE_USE_VULKAN)
         GPUOpen::VulkanMemoryAllocator
         SPIRV-Tools-static
     )
+    if(APPLE)
+        target_compile_definitions(rexui PRIVATE VK_USE_PLATFORM_METAL_EXT)
+    endif()
 endif()
 
 # Platform-specific dependencies
@@ -135,6 +144,12 @@ if(WIN32)
     target_link_libraries(rexui PUBLIC
         dwmapi
         Shcore
+    )
+elseif(APPLE)
+    target_link_libraries(rexui PUBLIC
+        "-framework AppKit"
+        "-framework Foundation"
+        "-framework QuartzCore"
     )
 else()
     find_package(PkgConfig REQUIRED)
@@ -158,5 +173,3 @@ if(REXGLUE_USE_D3D12)
         dxc-headers
     )
 endif()
-
-

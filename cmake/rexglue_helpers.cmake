@@ -10,11 +10,27 @@
 #   - ReXApp base class source (rex_app.cpp)
 #   - Platform-specific link/compile settings
 #==========================================================
+if(APPLE)
+    include("${CMAKE_CURRENT_LIST_DIR}/rexglue_moltenvk.cmake")
+endif()
+
 function(rexglue_configure_target target_name)
+    set(rexglue_effective_system_processor "${REXGLUE_EFFECTIVE_SYSTEM_PROCESSOR}")
+    if(NOT rexglue_effective_system_processor)
+        set(rexglue_effective_system_processor "${CMAKE_SYSTEM_PROCESSOR}")
+        if(APPLE AND CMAKE_OSX_ARCHITECTURES)
+            list(GET CMAKE_OSX_ARCHITECTURES 0 rexglue_effective_system_processor)
+        endif()
+    endif()
+    string(TOLOWER "${rexglue_effective_system_processor}" rexglue_effective_system_processor_lower)
+
     # Platform entry point
     if(WIN32)
         target_sources(${target_name} PRIVATE
             ${REXGLUE_SHARE_DIR}/windowed_app_main_win.cpp)
+    elseif(APPLE)
+        target_sources(${target_name} PRIVATE
+            ${REXGLUE_SHARE_DIR}/windowed_app_main_macos.cpp)
     else()
         target_sources(${target_name} PRIVATE
             ${REXGLUE_SHARE_DIR}/windowed_app_main_posix.cpp)
@@ -48,42 +64,59 @@ function(rexglue_configure_target target_name)
         target_include_directories(${target_name} PRIVATE ${GTK3_INCLUDE_DIRS})
         target_link_libraries(${target_name} PRIVATE ${GTK3_LIBRARIES})
         # Large executable support
-        if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+        if(rexglue_effective_system_processor_lower MATCHES "^(x86_64|amd64)$")
             target_link_options(${target_name} PRIVATE -Wl,--no-relax)
             target_compile_options(${target_name} PRIVATE -mcmodel=large)
-        elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|ARM64")
+        elseif(rexglue_effective_system_processor_lower MATCHES "^(aarch64|arm64)$")
             target_compile_options(${target_name} PRIVATE -march=armv8-a)
         endif()
     endif()
 
     if(NOT MSVC)
-        if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+        if(NOT APPLE AND rexglue_effective_system_processor_lower MATCHES "^(x86_64|amd64)$")
             target_compile_options(${target_name} PRIVATE -msse4.1)
         endif()
         # ARM64 NEON is enabled via -march=armv8-a above
     endif()
 
-    # Copy runtime DLLs next to the executable
-    if(WIN32)
-        add_custom_command(TARGET ${target_name} POST_BUILD
-            COMMAND "$<$<BOOL:$<TARGET_RUNTIME_DLLS:${target_name}>>:${CMAKE_COMMAND};-E;copy_if_different;$<TARGET_RUNTIME_DLLS:${target_name}>;$<TARGET_FILE_DIR:${target_name}>>"
-            COMMAND_EXPAND_LISTS
-        )
-        # FidelityFX is linked PRIVATE by rexui (to avoid propagating DLL
-        # requirements to tool-mode targets), so copy its DLLs explicitly.
-        if(TARGET amd_fidelityfx_vk)
-            add_custom_command(TARGET ${target_name} POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    $<TARGET_FILE:amd_fidelityfx_vk>
-                    $<TARGET_FILE_DIR:${target_name}>
-            )
-        endif()
-        if(TARGET amd_fidelityfx_dx12)
-            add_custom_command(TARGET ${target_name} POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    $<TARGET_FILE:amd_fidelityfx_dx12>
-                    $<TARGET_FILE_DIR:${target_name}>
-            )
-        endif()
-    endif()
-endfunction()
+  # Copy runtime DLLs next to the executable
+  if (WIN32)
+    add_custom_command(
+      TARGET ${target_name}
+      POST_BUILD
+      COMMAND "$<$<BOOL:$<TARGET_RUNTIME_DLLS:${target_name}>>:${CMAKE_COMMAND};-E;copy_if_different;$<TARGET_RUNTIME_DLLS:${target_name}>;$<TARGET_FILE_DIR:${target_name}>>"
+      COMMAND_EXPAND_LISTS
+    )
+    # FidelityFX is linked PRIVATE by rexui, so copy its DLLs explicitly.
+    if (TARGET amd_fidelityfx_vk)
+      add_custom_command(
+        TARGET ${target_name}
+        POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_FILE:amd_fidelityfx_vk>
+                $<TARGET_FILE_DIR:${target_name}>
+      )
+    endif ()
+    if (TARGET amd_fidelityfx_dx12)
+      add_custom_command(
+        TARGET ${target_name}
+        POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_FILE:amd_fidelityfx_dx12>
+                $<TARGET_FILE_DIR:${target_name}>
+      )
+    endif ()
+  elseif (APPLE)
+    target_link_options(${target_name} PRIVATE -Wl,-rpath,@executable_path)
+    if (REXGLUE_USE_VULKAN)
+      rexglue_find_moltenvk_library(_rexglue_moltenvk_library REQUIRED)
+      add_custom_command(
+        TARGET ${target_name}
+        POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${_rexglue_moltenvk_library}"
+                $<TARGET_FILE_DIR:${target_name}>
+      )
+    endif ()
+  endif ()
+endfunction ()

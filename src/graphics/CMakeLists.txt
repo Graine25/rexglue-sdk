@@ -137,6 +137,9 @@ if(REXGLUE_USE_VULKAN)
         OGLCompiler
     )
     target_compile_definitions(rexgraphics PUBLIC REX_HAS_VULKAN=1)
+    if(APPLE)
+        target_compile_definitions(rexgraphics PRIVATE VK_USE_PLATFORM_METAL_EXT)
+    endif()
 endif()
 
 if(REXGLUE_USE_D3D12)
@@ -147,4 +150,3 @@ if(REXGLUE_USE_D3D12)
     )
     target_compile_definitions(rexgraphics PUBLIC REX_HAS_D3D12=1)
 endif()
-
