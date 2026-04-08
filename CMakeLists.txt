@@ -65,6 +65,9 @@ string(TOLOWER "${REXGLUE_EFFECTIVE_SYSTEM_PROCESSOR}" REXGLUE_EFFECTIVE_SYSTEM_
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
+set(THREADS_PREFER_PTHREAD_FLAG TRUE)
+find_package(Threads REQUIRED)
+
 if(UNIX AND NOT APPLE)
     # Keep installed binaries self-contained by resolving shared libs relative
     # to the install prefix (for example, bin -> ../lib).

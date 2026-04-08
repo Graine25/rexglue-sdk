@@ -43,6 +43,23 @@ if(WIN32)
         string_win.cpp
         threading_win.cpp
     )
+elseif(APPLE)
+    target_sources(rexcore PRIVATE
+        atomic_posix.cpp
+        clock_posix.cpp
+        dbg_posix.cpp
+        dynlib_posix.cpp
+        exception_handler_mac.cpp
+        filesystem_posix.cpp
+        fiber_posix.cpp
+        mapped_memory_posix.cpp
+        math_gcc.cpp
+        memory_posix.cpp
+        seh_posix.cpp
+        socket_posix.cpp
+        string_posix.cpp
+        threading_mac.cpp
+    )
 elseif(UNIX)
     target_sources(rexcore PRIVATE
         atomic_posix.cpp
@@ -74,7 +91,13 @@ target_include_directories(rexcore PRIVATE
 )
 
 if(UNIX)
-    target_link_libraries(rexcore PRIVATE pthread rt dl)
+    target_link_libraries(rexcore PRIVATE Threads::Threads)
+    if(CMAKE_DL_LIBS)
+        target_link_libraries(rexcore PRIVATE ${CMAKE_DL_LIBS})
+    endif()
+    if(NOT APPLE)
+        target_link_libraries(rexcore PRIVATE rt)
+    endif()
 endif()
 
 target_link_libraries(rexcore

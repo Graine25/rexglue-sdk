@@ -89,11 +89,11 @@ FILE* OpenFile(const std::filesystem::path& path, const std::string_view mode) {
 }
 
 bool Seek(FILE* file, int64_t offset, int origin) {
-  return fseeko64(file, off64_t(offset), origin) == 0;
+  return fseeko(file, static_cast<off_t>(offset), origin) == 0;
 }
 
 int64_t Tell(FILE* file) {
-  return int64_t(ftello64(file));
+  return static_cast<int64_t>(ftello(file));
 }
 
 bool TruncateStdioFile(FILE* file, uint64_t length) {
@@ -104,7 +104,7 @@ bool TruncateStdioFile(FILE* file, uint64_t length) {
   if (position < 0) {
     return false;
   }
-  if (ftruncate64(fileno(file), off64_t(length))) {
+  if (ftruncate(fileno(file), static_cast<off_t>(length))) {
     return false;
   }
   if (uint64_t(position) > length) {

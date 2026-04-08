@@ -24,6 +24,14 @@ namespace chrono {
 
 using hundrednanoseconds = std::chrono::duration<int64_t, hundrednano>;
 
+template <typename ToClock, typename FromClock>
+struct ClockTimeConversion;
+
+template <typename ToClock, typename FromClock, typename Duration>
+typename ToClock::time_point clock_cast(const std::chrono::time_point<FromClock, Duration>& time_point) {
+  return ClockTimeConversion<ToClock, FromClock>{}(time_point);
+}
+
 // TODO(JoelLinn) define xstead_clock xsystem_clock etc.
 
 namespace detail {
@@ -111,15 +119,10 @@ using WinSystemClock = detail::NtSystemClock<detail::Domain::Host>;
 // Guest system clock, scaled
 using XSystemClock = detail::NtSystemClock<detail::Domain::Guest>;
 
-}  // namespace chrono
-}  // namespace rex
-
-namespace std::chrono {
-
 template <>
-struct clock_time_conversion<::rex::chrono::WinSystemClock, ::rex::chrono::XSystemClock> {
-  using WClock_ = ::rex::chrono::WinSystemClock;
-  using XClock_ = ::rex::chrono::XSystemClock;
+struct ClockTimeConversion<WinSystemClock, XSystemClock> {
+  using WClock_ = WinSystemClock;
+  using XClock_ = XSystemClock;
 
   template <typename Duration>
   typename WClock_::time_point operator()(
@@ -140,9 +143,9 @@ struct clock_time_conversion<::rex::chrono::WinSystemClock, ::rex::chrono::XSyst
 };
 
 template <>
-struct clock_time_conversion<::rex::chrono::XSystemClock, ::rex::chrono::WinSystemClock> {
-  using WClock_ = ::rex::chrono::WinSystemClock;
-  using XClock_ = ::rex::chrono::XSystemClock;
+struct ClockTimeConversion<XSystemClock, WinSystemClock> {
+  using WClock_ = WinSystemClock;
+  using XClock_ = XSystemClock;
 
   template <typename Duration>
   typename XClock_::time_point operator()(
@@ -162,4 +165,5 @@ struct clock_time_conversion<::rex::chrono::XSystemClock, ::rex::chrono::WinSyst
   }
 };
 
-}  // namespace std::chrono
+}  // namespace chrono
+}  // namespace rex
