@@ -144,7 +144,15 @@ bool Memory::Initialize() {
   // Attempt to create our views. This may fail at the first address
   // we pick, so try a few times.
   mapping_base_ = 0;
-  for (size_t n = 32; n < 64; n++) {
+  // macOS arm64 commonly loads the main executable at 0x100000000, so probing
+  // guest memory bases from 4 GB upward can collide with the current process
+  // image. Skip the low candidates and start at 16 GB instead.
+#if REX_PLATFORM_MAC
+  constexpr size_t kMappingBaseStartBit = 34;
+#else
+  constexpr size_t kMappingBaseStartBit = 32;
+#endif
+  for (size_t n = kMappingBaseStartBit; n < 64; n++) {
     auto mapping_base = reinterpret_cast<uint8_t*>(1ull << n);
     if (!MapViews(mapping_base)) {
       mapping_base_ = mapping_base;

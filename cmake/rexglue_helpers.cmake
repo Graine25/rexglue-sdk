@@ -49,6 +49,10 @@ function(rexglue_configure_target target_name)
         target_link_options(${target_name} PRIVATE
             "LINKER:/WHOLEARCHIVE:$<TARGET_FILE:rex::kernel>"
         )
+    elseif(APPLE)
+        target_link_options(${target_name} PRIVATE
+            "LINKER:-force_load,$<TARGET_FILE:rex::kernel>"
+        )
     else()
         target_link_options(${target_name} PRIVATE
             -Wl,--whole-archive

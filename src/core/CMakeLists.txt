@@ -54,7 +54,7 @@ elseif(APPLE)
         fiber_posix.cpp
         mapped_memory_posix.cpp
         math_gcc.cpp
-        memory_posix.cpp
+        memory_mac.cpp
         seh_posix.cpp
         socket_posix.cpp
         string_posix.cpp
@@ -122,4 +122,3 @@ if(REXGLUE_ENABLE_PERF_COUNTERS)
     target_compile_definitions(rexcore PUBLIC
         $<$<NOT:$<CONFIG:Release>>:REXGLUE_ENABLE_PERF_COUNTERS>)
 endif()
-
