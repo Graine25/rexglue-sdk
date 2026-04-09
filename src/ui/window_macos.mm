@@ -12,6 +12,7 @@ class MacWindow;
 
 @interface RexContentView : NSView
 @property(nonatomic, assign) rex::ui::MacWindow* owner;
+- (void)updateDrawableSize;
 - (void)requestOwnerPaint;
 @end
 
@@ -50,7 +51,6 @@ class MacWindow final : public Window {
     }
     if (content_view_ != nil) {
       content_view_.owner = nullptr;
-      [content_view_ setLayer:nil];
     }
     metal_layer_ = nil;
   }
@@ -77,13 +77,13 @@ class MacWindow final : public Window {
 
     content_view_ = [[RexContentView alloc] initWithFrame:frame];
     content_view_.owner = this;
+    [content_view_ setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
     [content_view_ setWantsLayer:YES];
-    metal_layer_ = [CAMetalLayer layer];
+    metal_layer_ = static_cast<CAMetalLayer*>(content_view_.layer);
     if (metal_layer_ == nil) {
       REXLOG_ERROR("Failed to create CAMetalLayer");
       return false;
     }
-    [content_view_ setLayer:metal_layer_];
     [window_ setContentView:content_view_];
 
     window_delegate_ = [[RexWindowDelegate alloc] init];
@@ -184,10 +184,16 @@ class MacWindow final : public Window {
     if (metal_layer_ == nil || content_view_ == nil) {
       return;
     }
-    const CGFloat scale =
-        content_view_.window != nil ? content_view_.window.backingScaleFactor : 1.0;
+    const NSSize logical_size = content_view_.bounds.size;
+    NSSize backing_size = logical_size;
+    if (content_view_.window != nil) {
+      backing_size = [content_view_ convertSizeToBacking:logical_size];
+    }
+    const CGFloat scale = logical_size.height > 0.0 ? backing_size.height / logical_size.height : 1.0;
     [metal_layer_ setContentsScale:scale];
+    [metal_layer_ setDrawableSize:NSSizeToCGSize(backing_size)];
     [metal_layer_ setFrame:content_view_.bounds];
+    [metal_layer_ setFramebufferOnly:NO];
     [metal_layer_ setOpaque:YES];
   }
 
@@ -216,22 +222,37 @@ std::unique_ptr<MenuItem> MenuItem::Create(Type type, const std::string& text,
 
 @implementation RexContentView
 
++ (Class)layerClass {
+  return [CAMetalLayer class];
+}
+
+- (BOOL)wantsUpdateLayer {
+  return YES;
+}
+
+- (CALayer*)makeBackingLayer {
+  return [self.class.layerClass layer];
+}
+
 - (BOOL)isFlipped {
   return YES;
 }
 
-- (void)viewDidChangeBackingProperties {
-  [super viewDidChangeBackingProperties];
-  if (self.owner != nullptr) {
+- (void)updateDrawableSize {
+  if ([self.layer isKindOfClass:[CAMetalLayer class]] && self.owner != nullptr) {
     self.owner->OnNativeResize();
   }
 }
 
+- (void)viewDidChangeBackingProperties {
+  [super viewDidChangeBackingProperties];
+  [self updateDrawableSize];
+}
+
 - (void)setFrameSize:(NSSize)newSize {
   [super setFrameSize:newSize];
-  if (self.owner != nullptr) {
-    self.owner->OnNativeResize();
-  }
+  (void)newSize;
+  [self updateDrawableSize];
 }
 
 - (void)drawRect:(NSRect)dirtyRect {
