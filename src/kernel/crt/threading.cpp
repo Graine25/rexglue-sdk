@@ -23,6 +23,7 @@
 #include <rex/system/kernel_state.h>
 #include <rex/system/xmemory.h>
 #include <rex/system/xthread.h>
+#include <rex/system/user_module.h>
 #include <rex/system/xtypes.h>
 #include <rex/thread/fiber.h>
 
@@ -329,6 +330,124 @@ void SwitchToFiber_entry(mapped_void lpFiber) {
   // Resumed: non-volatile regs and stack state already restored by the fiber that switched back.
 }
 
+typedef int (*ThreadStartRoutine)(void* lpThreadParameter);
+
+X_HANDLE CreateThread_entry(mapped_void lpThreadAttributes, uint32_t dwStackSize,
+                            MappedPtr<ThreadStartRoutine> lpStartAddress, mapped_void lpParameter,
+                            int dwCreationFlags, mapped_u32 lpThreadId) {
+  if (!dwStackSize)
+    dwStackSize = REX_KERNEL_STATE()->GetExecutableModule()->stack_size();
+  dwStackSize = std::max((uint32_t)0x4000, ((dwStackSize + 0xFFF) & 0xFFFFF000));
+  dwCreationFlags = ((dwCreationFlags >> 2) & 1);
+
+  auto thread = rex::system::object_ref<rex::system::XThread>(
+      new rex::system::XThread(REX_KERNEL_STATE(), dwStackSize, 0, lpStartAddress.guest_address(),
+                               lpParameter.guest_address(), dwCreationFlags, true, false,
+                               REX_KERNEL_STATE()->GetTitleProcess()));
+
+  rex::X_STATUS result = thread->Create();
+  if (XSUCCEEDED(result)) {
+    if (lpThreadId)
+      *lpThreadId = thread->thread_id();
+    if (dwCreationFlags & 0x80)
+      return thread->guest_object();
+    return thread->handle();
+  }
+  return 0;
+}
+
+void ExitThread_entry(uint32_t exitCode) {
+  rex::system::XThread::GetCurrentThread()->Exit(exitCode);
+}
+
+// Helper function in xam to format timeouts.
+uint64_t* XapiFormatTimeOut(uint64_t* TimeOut, uint32_t Millis) {
+  if (Millis == -1)
+    return nullptr;
+  *TimeOut = static_cast<uint64_t>(-1) * Millis;
+  return TimeOut;
+}
+
+uint32_t WaitForSingleObjectEx_entry(rex::X_HANDLE handle, uint32_t dwMilliseconds,
+                                     bool bAlertable) {
+  auto obj = REX_KERNEL_OBJECTS()->LookupObject<rex::system::XObject>(handle);
+  if (!obj)
+    return -1;
+
+  uint64_t timeout_val;
+  uint64_t* timeout = XapiFormatTimeOut(&timeout_val, dwMilliseconds);
+
+  uint32_t result = 0;
+
+  while (!(result & 0x80000000)) {
+    result = obj->Wait(3, 1, bAlertable, timeout);
+
+    if (bAlertable && result == X_STATUS_USER_APC) {
+      rex::system::XThread::GetCurrentThread()->DeliverAPCs();
+      continue;
+    }
+
+    if (!bAlertable || result != X_STATUS_TIMEOUT) {
+      return result;
+    }
+  }
+
+  return -1;
+}
+
+uint32_t GetCurrentThreadId_entry() {
+  return system::XThread::GetCurrentThreadId();
+}
+
+uint32_t SuspendThread_entry(X_HANDLE handle) {
+  uint32_t suspendCnt = 0;
+  auto thread = REX_KERNEL_OBJECTS()->LookupObject<rex::system::XThread>(handle);
+  if (!thread || thread->type() != system::XObject::Type::Thread)
+    return -1;  // X_STATUS_INVALID_HANDLE
+  auto guest_thread = thread->guest_object<rex::system::X_KTHREAD>();
+  if (guest_thread->terminated) {
+    return -1;  // X_STATUS_THREAD_IS_TERMINATING
+  }
+#if REX_PLATFORM_LINUX
+  auto* current_thread = rex::system::XThread::GetCurrentThread();
+  bool is_self_suspend = current_thread && current_thread == thread.get();
+  if (is_self_suspend) {
+    suspendCnt = thread->SelfSuspend();
+  } else {
+    if (thread->Suspend(&suspendCnt) != X_STATUS_SUCCESS)
+      return -1;
+  }
+#else
+  if (thread->Suspend(&suspendCnt))
+    return -1;
+#endif
+  return suspendCnt;
+}
+
+uint32_t ResumeThread_entry(X_HANDLE handle) {
+  uint32_t suspendCnt = 0;
+
+  auto thread = REX_KERNEL_OBJECTS()->LookupObject<rex::system::XThread>(handle);
+  if (!thread)
+    return -1;  // X_STATUS_INVALID_HANDLE
+
+  X_RESULT res = thread->Resume(&suspendCnt);
+  if (res != X_STATUS_SUCCESS)
+    return -1;  // An error occurred resuming the thread.
+
+  return suspendCnt;
+}
+
+bool SetThreadPriority_entry(X_HANDLE handle, int32_t nPriority) {
+  nPriority = std::clamp(nPriority, -16, 16);
+  auto thread = REX_KERNEL_OBJECTS()->LookupObject<rex::system::XThread>(handle);
+  if (!thread) {
+    return false;  // X_STATUS_INVALID_HANDLE
+  }
+  thread->SetPriority(nPriority);
+  return true;
+}
+
 }  // namespace rex::kernel::crt
 
 //=============================================================================
@@ -340,3 +459,9 @@ REX_HOOK(rexcrt_ConvertFiberToThread, rex::kernel::crt::ConvertFiberToThread_ent
 REX_HOOK(rexcrt_CreateFiber, rex::kernel::crt::CreateFiber_entry)
 REX_HOOK(rexcrt_DeleteFiber, rex::kernel::crt::DeleteFiber_entry)
 REX_HOOK(rexcrt_SwitchToFiber, rex::kernel::crt::SwitchToFiber_entry)
+REX_HOOK(rexcrt_CreateThread, rex::kernel::crt::CreateThread_entry)
+REX_HOOK(rexcrt_ExitThread, rex::kernel::crt::ExitThread_entry)
+REX_HOOK(rexcrt_WaitForSingleObjectEx, rex::kernel::crt::WaitForSingleObjectEx_entry)
+REX_HOOK(rexcrt_SuspendThread, rex::kernel::crt::SuspendThread_entry)
+REX_HOOK(rexcrt_ResumeThread, rex::kernel::crt::ResumeThread_entry)
+REX_HOOK(rexcrt_SetThreadPriority, rex::kernel::crt::SetThreadPriority_entry)
