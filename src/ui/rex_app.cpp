@@ -341,7 +341,11 @@ bool ReXApp::SetupPresentation() {
                   auto* cp = gs->command_processor();
                   if (!cp)
                     return;
-                  cp->SetShaderDisabledByHash(hash, disabled);
+                  if (disabled) {
+                    cp->AddShaderBlacklist(hash);
+                  } else {
+                    cp->RemoveShaderBlacklist(hash);
+                  }
                 };
                 auto details_provider = [this](uint64_t hash) {
                   ui::ShaderDebuggerDetails out;
