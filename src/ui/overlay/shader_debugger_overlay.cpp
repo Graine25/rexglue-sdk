@@ -66,18 +66,28 @@ void LoadEditBuffer(std::vector<char>& buffer, const std::string& source) {
 
 }  // namespace
 
-ShaderDebuggerDialog::ShaderDebuggerDialog(ImGuiDrawer* imgui_drawer,
-                                           SnapshotProvider snapshot_provider,
-                                           DisableSetter disable_setter,
-                                           DetailsProvider details_provider,
-                                           BinaryReplacer binary_replacer)
+ShaderDebuggerDialog::ShaderDebuggerDialog(
+    ImGuiDrawer* imgui_drawer, SnapshotProvider snapshot_provider, DisableSetter disable_setter,
+    DetailsProvider details_provider, BinaryReplacer binary_replacer,
+    ProfilingToggle profiling_toggle, ProfilingResetter profiling_resetter)
     : ImGuiDialog(imgui_drawer),
       snapshot_provider_(std::move(snapshot_provider)),
       disable_setter_(std::move(disable_setter)),
       details_provider_(std::move(details_provider)),
-      binary_replacer_(std::move(binary_replacer)) {}
+      binary_replacer_(std::move(binary_replacer)),
+      profiling_toggle_(std::move(profiling_toggle)),
+      profiling_resetter_(std::move(profiling_resetter)) {
+  // Turn on per-shader timing for the lifetime of the dialog.
+  if (profiling_toggle_)
+    profiling_toggle_(true);
+  if (profiling_resetter_)
+    profiling_resetter_();
+}
 
-ShaderDebuggerDialog::~ShaderDebuggerDialog() = default;
+ShaderDebuggerDialog::~ShaderDebuggerDialog() {
+  if (profiling_toggle_)
+    profiling_toggle_(false);
+}
 
 void ShaderDebuggerDialog::RefreshSelectedDetails() {
   if (!has_selection_ || !details_provider_) {
@@ -205,6 +215,11 @@ void ShaderDebuggerDialog::DrawShaderTable() {
       }
     }
   }
+  ImGui::SameLine();
+  if (ImGui::Button("Reset timings")) {
+    if (profiling_resetter_)
+      profiling_resetter_();
+  }
   if (has_selection_) {
     ImGui::SameLine();
     if (ImGui::Button("Close viewer")) {
@@ -221,15 +236,18 @@ void ShaderDebuggerDialog::DrawShaderTable() {
 
   ImGui::Separator();
 
-  if (ImGui::BeginTable("##shaders", 5,
+  if (ImGui::BeginTable("##shaders", 8,
                         ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollY |
                             ImGuiTableFlags_Sortable | ImGuiTableFlags_Resizable)) {
     ImGui::TableSetupScrollFreeze(0, 1);
     ImGui::TableSetupColumn("Enabled", ImGuiTableColumnFlags_NoSort, 70.0f);
     ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_DefaultSort, 50.0f);
     ImGui::TableSetupColumn("Hash", ImGuiTableColumnFlags_None, 170.0f);
-    ImGui::TableSetupColumn("Dwords", ImGuiTableColumnFlags_None, 80.0f);
-    ImGui::TableSetupColumn("Active", ImGuiTableColumnFlags_None, 60.0f);
+    ImGui::TableSetupColumn("Dwords", ImGuiTableColumnFlags_None, 70.0f);
+    ImGui::TableSetupColumn("Active", ImGuiTableColumnFlags_None, 50.0f);
+    ImGui::TableSetupColumn("Total ms", ImGuiTableColumnFlags_None, 80.0f);
+    ImGui::TableSetupColumn("Draws", ImGuiTableColumnFlags_None, 70.0f);
+    ImGui::TableSetupColumn("Avg us", ImGuiTableColumnFlags_None, 70.0f);
     ImGui::TableHeadersRow();
 
     std::vector<size_t> indices;
@@ -267,6 +285,24 @@ void ShaderDebuggerDialog::DrawShaderTable() {
             case 4:
               cmp = (ea.active ? 1 : 0) - (eb.active ? 1 : 0);
               break;
+            case 5:
+              cmp = (ea.profile_total_ns < eb.profile_total_ns)
+                        ? -1
+                        : (ea.profile_total_ns > eb.profile_total_ns ? 1 : 0);
+              break;
+            case 6:
+              cmp = (ea.profile_draw_count < eb.profile_draw_count)
+                        ? -1
+                        : (ea.profile_draw_count > eb.profile_draw_count ? 1 : 0);
+              break;
+            case 7: {
+              uint64_t avg_a =
+                  ea.profile_draw_count ? ea.profile_total_ns / ea.profile_draw_count : 0;
+              uint64_t avg_b =
+                  eb.profile_draw_count ? eb.profile_total_ns / eb.profile_draw_count : 0;
+              cmp = (avg_a < avg_b) ? -1 : (avg_a > avg_b ? 1 : 0);
+              break;
+            }
             default:
               break;
           }
@@ -319,6 +355,20 @@ void ShaderDebuggerDialog::DrawShaderTable() {
         ImGui::TableSetColumnIndex(4);
         if (entry.active) {
           ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "*");
+        }
+
+        ImGui::TableSetColumnIndex(5);
+        ImGui::Text("%.3f", entry.profile_total_ns / 1'000'000.0);
+
+        ImGui::TableSetColumnIndex(6);
+        ImGui::Text("%llu", static_cast<unsigned long long>(entry.profile_draw_count));
+
+        ImGui::TableSetColumnIndex(7);
+        if (entry.profile_draw_count) {
+          ImGui::Text("%.2f", (entry.profile_total_ns / 1'000.0) /
+                                  static_cast<double>(entry.profile_draw_count));
+        } else {
+          ImGui::TextDisabled("-");
         }
 
         ImGui::PopID();
