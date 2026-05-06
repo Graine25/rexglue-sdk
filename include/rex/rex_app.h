@@ -82,7 +82,6 @@ class ShaderDebuggerDialog;
 ///   };
 ///
 ///   // src/main.cpp
-///   #include "generated/my_app_config.h"
 ///   #include "generated/my_app_init.h"
 ///   #include "my_app_app.h"
 ///   REX_DEFINE_APP(my_app, MyApp::Create)
