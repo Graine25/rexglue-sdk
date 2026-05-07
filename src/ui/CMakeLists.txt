@@ -85,7 +85,7 @@ if(REXGLUE_USE_D3D12)
     list(APPEND REXUI_SOURCES ${REXUI_D3D12_SOURCES})
 endif()
 
-add_library(rexui STATIC ${REXUI_SOURCES})
+add_library(rexui OBJECT ${REXUI_SOURCES})
 add_library(rex::ui ALIAS rexui)
 
 target_include_directories(rexui PUBLIC
@@ -156,6 +156,7 @@ endif()
 if(REXGLUE_USE_D3D12)
     target_link_libraries(rexui PUBLIC
         dxgi
+        dxguid
         dxc-headers
     )
 endif()
