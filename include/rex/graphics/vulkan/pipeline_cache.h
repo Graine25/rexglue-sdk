@@ -254,13 +254,15 @@ class VulkanPipelineCache {
     // destroyed by it while the pipeline cache is active.
     std::atomic<const PipelineLayoutProvider*> pipeline_layout{nullptr};
     std::atomic<bool> is_placeholder{false};
+    std::atomic<uint64_t> generation{0};
     Pipeline() = default;
     Pipeline(const PipelineLayoutProvider* pipeline_layout_provider)
         : pipeline_layout(pipeline_layout_provider) {}
     Pipeline(const Pipeline& other)
         : pipeline(other.pipeline.load(std::memory_order_acquire)),
           pipeline_layout(other.pipeline_layout.load(std::memory_order_acquire)),
-          is_placeholder(other.is_placeholder.load(std::memory_order_acquire)) {}
+          is_placeholder(other.is_placeholder.load(std::memory_order_acquire)),
+          generation(other.generation.load(std::memory_order_acquire)) {}
     Pipeline& operator=(const Pipeline& other) {
       if (this == &other) {
         return *this;
@@ -270,6 +272,7 @@ class VulkanPipelineCache {
                             std::memory_order_release);
       is_placeholder.store(other.is_placeholder.load(std::memory_order_acquire),
                            std::memory_order_release);
+      generation.store(other.generation.load(std::memory_order_acquire), std::memory_order_release);
       return *this;
     }
   };
@@ -279,6 +282,7 @@ class VulkanPipelineCache {
   struct PipelineCreationArguments {
     uint8_t priority = 0;
     std::pair<const PipelineDescription, Pipeline>* pipeline = nullptr;
+    uint64_t pipeline_generation = 0;
     const PipelineLayoutProvider* pipeline_layout = nullptr;
     // Guest shader translation (VS or TES depending on host vertex type).
     const VulkanShader::VulkanTranslation* vertex_shader = nullptr;

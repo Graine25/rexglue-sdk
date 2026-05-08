@@ -1019,19 +1019,19 @@ bool VulkanPipelineCache::ReplaceShaderTranslationBinary(uint64_t ucode_hash, ui
     }
     tr->set_translated_binary(std::move(const_cast<std::vector<uint8_t>&>(binary)));
 
-    // Drop every cached pipeline that referenced this shader so it gets
-    // rebuilt from the new binary on next use.
+    // Invalidate every cached pipeline that referenced this shader so it gets
+    // rebuilt from the new binary on next use. Keep map entries stable because
+    // async creation requests hold pointers into the map.
     last_pipeline_ = nullptr;
-    for (auto it = pipelines_.begin(); it != pipelines_.end();) {
+    for (auto it = pipelines_.begin(); it != pipelines_.end(); ++it) {
       if (it->first.vertex_shader_hash == ucode_hash || it->first.pixel_shader_hash == ucode_hash) {
-        VkPipeline old = it->second.pipeline.load(std::memory_order_acquire);
+        it->second.generation.fetch_add(1, std::memory_order_acq_rel);
+        VkPipeline old = it->second.pipeline.exchange(VK_NULL_HANDLE, std::memory_order_acq_rel);
+        it->second.is_placeholder.store(false, std::memory_order_release);
         if (old != VK_NULL_HANDLE) {
           std::lock_guard<std::mutex> lock(deferred_destroy_lock_);
           deferred_destroy_pipelines_.emplace_back(command_processor_.GetCurrentSubmission(), old);
         }
-        it = pipelines_.erase(it);
-      } else {
-        ++it;
       }
     }
   });
@@ -3140,6 +3140,8 @@ bool VulkanPipelineCache::TryGetPipelineCreationArgumentsForDescription(
   }
 
   creation_arguments.pipeline = pipeline;
+  creation_arguments.pipeline_generation =
+      pipeline->second.generation.load(std::memory_order_acquire);
   creation_arguments.pipeline_layout = pipeline_layout;
   creation_arguments.vertex_shader = vertex_shader;
   creation_arguments.pixel_shader = for_placeholder ? nullptr : pixel_shader;
@@ -3153,6 +3155,11 @@ bool VulkanPipelineCache::TryGetPipelineCreationArgumentsForDescription(
 
 bool VulkanPipelineCache::EnsurePipelineCreated(const PipelineCreationArguments& creation_arguments,
                                                 VkShaderModule fragment_shader_override) {
+  if (creation_arguments.pipeline_generation !=
+      creation_arguments.pipeline->second.generation.load(std::memory_order_acquire)) {
+    return false;
+  }
+
   VkPipeline existing_pipeline =
       creation_arguments.pipeline->second.pipeline.load(std::memory_order_acquire);
   bool is_placeholder =
@@ -3640,6 +3647,11 @@ bool VulkanPipelineCache::EnsurePipelineCreated(const PipelineCreationArguments&
         uint32_t(description.tessellation_mode),
         creation_arguments.tessellation_patch_control_points, description.render_pass_key.key,
         uint32_t(use_dynamic_rendering));
+    return false;
+  }
+  if (creation_arguments.pipeline_generation !=
+      creation_arguments.pipeline->second.generation.load(std::memory_order_acquire)) {
+    dfn.vkDestroyPipeline(device, pipeline, nullptr);
     return false;
   }
   bool was_placeholder =

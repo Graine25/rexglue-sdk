@@ -14,7 +14,9 @@
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <future>
 #include <iterator>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <string_view>
@@ -632,7 +634,17 @@ CommandProcessor::ShaderDetails VulkanCommandProcessor::GetShaderDetails(
   if (!pipeline_cache_) {
     return {};
   }
-  return pipeline_cache_->GetShaderDetails(ucode_hash);
+  if (!worker_running_.load(std::memory_order_acquire)) {
+    return pipeline_cache_->GetShaderDetails(ucode_hash);
+  }
+  auto details_promise = std::make_shared<std::promise<ShaderDetails>>();
+  auto details_future = details_promise->get_future();
+  const_cast<VulkanCommandProcessor*>(this)->CallInThread(
+      [this, ucode_hash, details_promise]() mutable {
+        details_promise->set_value(pipeline_cache_ ? pipeline_cache_->GetShaderDetails(ucode_hash)
+                                                   : ShaderDetails{});
+      });
+  return details_future.get();
 }
 
 bool VulkanCommandProcessor::ReplaceShaderTranslationBinary(uint64_t ucode_hash,

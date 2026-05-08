@@ -13,6 +13,8 @@
 #include <chrono>
 #include <cstdarg>
 #include <cstring>
+#include <future>
+#include <memory>
 #include <sstream>
 #include <utility>
 
@@ -135,7 +137,17 @@ CommandProcessor::ShaderDetails D3D12CommandProcessor::GetShaderDetails(uint64_t
   if (!pipeline_cache_) {
     return {};
   }
-  return pipeline_cache_->GetShaderDetails(ucode_hash);
+  if (!worker_running_.load(std::memory_order_acquire)) {
+    return pipeline_cache_->GetShaderDetails(ucode_hash);
+  }
+  auto details_promise = std::make_shared<std::promise<ShaderDetails>>();
+  auto details_future = details_promise->get_future();
+  const_cast<D3D12CommandProcessor*>(this)->CallInThread(
+      [this, ucode_hash, details_promise]() mutable {
+        details_promise->set_value(pipeline_cache_ ? pipeline_cache_->GetShaderDetails(ucode_hash)
+                                                   : ShaderDetails{});
+      });
+  return details_future.get();
 }
 
 bool D3D12CommandProcessor::ReplaceShaderTranslationBinary(uint64_t ucode_hash,
@@ -146,6 +158,21 @@ bool D3D12CommandProcessor::ReplaceShaderTranslationBinary(uint64_t ucode_hash,
   }
   return pipeline_cache_->ReplaceShaderTranslationBinary(ucode_hash, modification,
                                                          std::move(binary));
+}
+
+bool D3D12CommandProcessor::ReplaceShaderTranslationHLSL(uint64_t ucode_hash, uint64_t modification,
+                                                         std::string_view source,
+                                                         std::string_view entry_point,
+                                                         std::string_view target_profile,
+                                                         std::string* out_error) {
+  if (!pipeline_cache_) {
+    if (out_error) {
+      *out_error = "Pipeline cache not initialized.";
+    }
+    return false;
+  }
+  return pipeline_cache_->ReplaceShaderTranslationHLSL(ucode_hash, modification, source,
+                                                       entry_point, target_profile, out_error);
 }
 
 void D3D12CommandProcessor::ResetShaderProfiling() {

@@ -189,6 +189,17 @@ bool ReXApp::ConstructRuntime(const PathConfig& paths) {
     return false;
   }
 
+  auto* graphics_system = static_cast<rex::graphics::GraphicsSystem*>(runtime_->graphics_system());
+  if (graphics_system) {
+    if (auto* cp = graphics_system->command_processor()) {
+      auto blacklist = ui::ShaderDebuggerDialog::ReadShaderBlacklistFromToml(
+          config_path_.parent_path() / "shaders.toml");
+      for (uint64_t hash : blacklist) {
+        cp->AddShaderBlacklist(hash);
+      }
+    }
+  }
+
   if (window_ && runtime_->input_system()) {
     static_cast<rex::input::InputSystem*>(runtime_->input_system())->AttachWindow(window_.get());
   }
