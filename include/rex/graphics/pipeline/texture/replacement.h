@@ -8,12 +8,12 @@
  *              big-endian, exactly as the Xbox GPU would read them).  This
  *              makes the hash address-independent and run-independent.
  *
- *              Dump layout  (relative to the recomp root):
- *                  textures/dump/<hash16>_<w>x<h>_<fmt_name>.dds
+ *              Dump layout  (relative to the configured textures folder):
+ *                  dump/<hash16>_<w>x<h>_<fmt_name>.dds
  *
  *              Replacement layout (scanned once at init, hot-reloaded on demand via Rescan()):
- *                  textures/replace/<hash16>.dds   (RGBA8/BGRA8 or BC1/BC2/BC3)
- *                  textures/replace/<hash16>.png   (RGBA8; loaded via stb_image)
+ *                  replace/<hash16>.dds   (RGBA8/BGRA8 or BC1/BC2/BC3)
+ *                  replace/<hash16>.png   (RGBA8; loaded via stb_image)
  *
  *              Dump DDS format:
  *                - Compressed formats (DXT1/DXT3/DXT5/DXN/CTX1/DXT3A/DXT5A):
@@ -36,6 +36,10 @@
 #include <rex/cvar.h>
 #include <rex/graphics/xenos.h>
 
+// CVARs controlling the dump/replace pipeline (defined in cache.cpp).
+REXCVAR_DECLARE(bool, texture_dump_enabled);
+REXCVAR_DECLARE(bool, texture_replace_enabled);
+REXCVAR_DECLARE(std::string, texture_folder);
 
 namespace rex::graphics {
 
@@ -56,7 +60,7 @@ struct TextureReplacementData {
 // ---------------------------------------------------------------------------
 class TextureReplacement {
  public:
-  explicit TextureReplacement(std::filesystem::path root);
+  explicit TextureReplacement(std::filesystem::path textures_dir);
   ~TextureReplacement() = default;
 
   TextureReplacement(const TextureReplacement&) = delete;
@@ -92,11 +96,11 @@ class TextureReplacement {
   // ---------------------------------------------------------------------------
   static uint64_t HashGuestData(const uint8_t* data, size_t size);
 
-  std::filesystem::path dump_dir() const { return root_ / "textures" / "dump"; }
-  std::filesystem::path replace_dir() const { return root_ / "textures" / "replace"; }
+  std::filesystem::path dump_dir() const { return textures_dir_ / "dump"; }
+  std::filesystem::path replace_dir() const { return textures_dir_ / "replace"; }
 
  private:
-  std::filesystem::path root_;
+  std::filesystem::path textures_dir_;
   std::unordered_map<uint64_t, std::filesystem::path> replacements_;
 
   // Textures that have been loaded from disk are cached here so that

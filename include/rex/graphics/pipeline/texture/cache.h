@@ -82,9 +82,9 @@ class TextureCache {
   // Re-index the textures/replace/ directory at runtime.
   void RescanTextureReplacements();
 
-  // Initialise the replacement pipeline with the given root directory.
-  // Safe to call multiple times (reinitialises with a new root).
-  void InitTextureReplacement(const std::filesystem::path& root);
+  // Initialise the replacement pipeline with the configured textures directory.
+  // Safe to call multiple times (reinitialises with a new directory).
+  void InitTextureReplacement(const std::filesystem::path& textures_dir);
 
   virtual void ClearCache();
 

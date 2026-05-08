@@ -82,6 +82,19 @@ REXCVAR_DEFINE_INT32(resolution_scale, 1, "GPU",
 REXCVAR_DEFINE_BOOL(pre_mask_resolve_l2_block, true, "GPU",
                     "Pre-mask scaled resolve L2 blocks to the write range before iterating");
 
+REXCVAR_DEFINE_BOOL(texture_dump_enabled, false, "GPU/Texture Replacement",
+                    "Dump all decoded textures to disk as DDS files for replacement authoring")
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
+
+REXCVAR_DEFINE_BOOL(texture_replace_enabled, false, "GPU/Texture Replacement",
+                    "Inject replacement textures from disk when available")
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
+
+REXCVAR_DEFINE_STRING(texture_folder, "", "GPU/Texture Replacement",
+                      "Override the textures folder used for dump/replace "
+                      "(empty = <executable folder>/textures)")
+    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+
 // DEFINE_int32(
 //     draw_resolution_scale_x, 1,
 //     "Integer pixel width scale used for scaling the rendering resolution "
@@ -128,6 +141,14 @@ REXCVAR_DEFINE_BOOL(pre_mask_resolve_l2_block, true, "GPU",
 //     "GPU");
 
 namespace rex::graphics {
+
+static std::filesystem::path GetTextureReplacementFolder() {
+  const std::string configured_texture_folder = REXCVAR_GET(texture_folder);
+  if (!configured_texture_folder.empty()) {
+    return rex::to_path(configured_texture_folder);
+  }
+  return rex::filesystem::GetExecutableFolder() / "textures";
+}
 
 const TextureCache::LoadShaderInfo TextureCache::load_shader_info_[kLoadShaderCount] = {
     // k8bpb
@@ -222,16 +243,14 @@ TextureCache::TextureCache(const RegisterFile& register_file, SharedMemory& shar
         shared_memory.RegisterGlobalWatch(ScaledResolveGlobalWatchCallbackThunk, this);
   }
 
-  // Initialise the replacement pipeline rooted at the executable folder so
-  // dumps and replacements live next to the binary regardless of the working
-  // directory:
-  //   <exe_folder>/textures/dump/     ← dumped DDS files written here
-  //   <exe_folder>/textures/replace/  ← replacement DDS files read from here
-  InitTextureReplacement(rex::filesystem::GetExecutableFolder());
+  // Initialise the replacement pipeline in the configured textures folder:
+  //   <texture_folder>/dump/     ← dumped DDS files written here
+  //   <texture_folder>/replace/  ← replacement files read from here
+  InitTextureReplacement(GetTextureReplacementFolder());
 }
 
-void TextureCache::InitTextureReplacement(const std::filesystem::path& root) {
-  replacement_ = std::make_unique<TextureReplacement>(root);
+void TextureCache::InitTextureReplacement(const std::filesystem::path& textures_dir) {
+  replacement_ = std::make_unique<TextureReplacement>(textures_dir);
 }
 
 void TextureCache::RescanTextureReplacements() {
@@ -480,7 +499,7 @@ bool TextureCache::CommitPreparedTextureLoad(const PendingTextureLoad& pending_l
   // disk as a binary blob so replacement authors can identify and recreate
   // textures. Runs only when the cvar is enabled and only for the base mip
   // level to keep disk I/O manageable.
-  if (replacement_ && pending_load.load_base) {
+  if (replacement_ && pending_load.load_base && REXCVAR_GET(texture_dump_enabled)) {
     const uint32_t guest_addr = texture_key.base_page << 12;
     const uint32_t guest_size = texture.GetGuestBaseSize();
     if (guest_size > 0) {
@@ -917,7 +936,8 @@ TextureCache::Texture* TextureCache::FindOrCreateTexture(TextureKey key) {
   texture_util::TextureGuestLayout original_guest_layout{};
   bool has_replacement = false;
   uint64_t replacement_content_hash = 0;
-  if (replacement_ && key.base_page != 0 && !key.scaled_resolve) {
+  if (replacement_ && REXCVAR_GET(texture_replace_enabled) && key.base_page != 0 &&
+      !key.scaled_resolve) {
     const uint32_t guest_addr = key.base_page << 12;
     // Capture the original guest layout BEFORE mutating the key.
     original_guest_layout = key.GetGuestLayout();

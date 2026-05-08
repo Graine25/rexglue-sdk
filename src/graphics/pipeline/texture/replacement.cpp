@@ -638,7 +638,8 @@ bool TextureReplacement::ReadDDS(const std::filesystem::path& path, TextureRepla
 // TextureReplacement — construction / rescan
 // ---------------------------------------------------------------------------
 
-TextureReplacement::TextureReplacement(std::filesystem::path root) : root_(std::move(root)) {
+TextureReplacement::TextureReplacement(std::filesystem::path textures_dir)
+    : textures_dir_(std::move(textures_dir)) {
   Rescan();
 }
 
