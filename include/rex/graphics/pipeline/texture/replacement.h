@@ -12,7 +12,7 @@
  *                  textures/dump/<hash16>_<w>x<h>_<fmt_name>.dds
  *
  *              Replacement layout (scanned once at init, hot-reloaded on demand via Rescan()):
- *                  textures/replace/<hash16>.dds   (any power-of-2 resolution)
+ *                  textures/replace/<hash16>.dds   (RGBA8/BGRA8 or BC1/BC2/BC3)
  *                  textures/replace/<hash16>.png   (RGBA8; loaded via stb_image)
  *
  *              Dump DDS format:
@@ -45,8 +45,8 @@ namespace rex::graphics {
 struct TextureReplacementData {
   // Decoded pixels: RGBA8 unorm, row-major, tightly packed (no row padding).
   std::vector<uint8_t> pixels;
-  uint32_t width      = 0;
-  uint32_t height     = 0;
+  uint32_t width = 0;
+  uint32_t height = 0;
   // Number of mip levels present in the replacement file (>= 1).
   uint32_t mip_levels = 1;
 };
@@ -59,7 +59,7 @@ class TextureReplacement {
   explicit TextureReplacement(std::filesystem::path root);
   ~TextureReplacement() = default;
 
-  TextureReplacement(const TextureReplacement&)            = delete;
+  TextureReplacement(const TextureReplacement&) = delete;
   TextureReplacement& operator=(const TextureReplacement&) = delete;
 
   // Rescans textures/replace/ and rebuilds the hash→path index.
@@ -76,14 +76,9 @@ class TextureReplacement {
   //   tiled        : TextureKey::tiled
   //   format       : TextureKey::format
   //   endianness   : TextureKey::endianness
-  void DumpTexture(uint64_t content_hash,
-                   uint32_t width, uint32_t height,
-                   uint32_t pitch_blocks,
-                   bool tiled,
-                   xenos::TextureFormat format,
-                   xenos::Endian endianness,
-                   const uint8_t* guest_bytes,
-                   uint32_t guest_size) const;
+  void DumpTexture(uint64_t content_hash, uint32_t width, uint32_t height, uint32_t pitch_blocks,
+                   bool tiled, xenos::TextureFormat format, xenos::Endian endianness,
+                   const uint8_t* guest_bytes, uint32_t guest_size) const;
 
   // ---------------------------------------------------------------------------
   // Injection path
@@ -97,7 +92,7 @@ class TextureReplacement {
   // ---------------------------------------------------------------------------
   static uint64_t HashGuestData(const uint8_t* data, size_t size);
 
-  std::filesystem::path dump_dir()    const { return root_ / "textures" / "dump"; }
+  std::filesystem::path dump_dir() const { return root_ / "textures" / "dump"; }
   std::filesystem::path replace_dir() const { return root_ / "textures" / "replace"; }
 
  private:
@@ -110,22 +105,15 @@ class TextureReplacement {
   // Hashes that failed to load are remembered so we don't retry every frame.
   mutable std::unordered_set<uint64_t> failed_cache_;
 
-  static bool WriteDDS_RGBA8(const std::filesystem::path& path,
-                             uint32_t width, uint32_t height,
-                             const uint8_t* rgba8_rows,
-                             uint32_t row_pitch_bytes);
+  static bool WriteDDS_RGBA8(const std::filesystem::path& path, uint32_t width, uint32_t height,
+                             const uint8_t* rgba8_rows, uint32_t row_pitch_bytes);
 
-  static bool WriteDDS_BC(const std::filesystem::path& path,
-                          uint32_t width, uint32_t height,
-                          const uint8_t* bc_blocks,
-                          uint32_t bytes_per_block,
-                          uint32_t fourcc);
+  static bool WriteDDS_BC(const std::filesystem::path& path, uint32_t width, uint32_t height,
+                          const uint8_t* bc_blocks, uint32_t bytes_per_block, uint32_t fourcc);
 
-  static bool ReadDDS(const std::filesystem::path& path,
-                      TextureReplacementData& out);
+  static bool ReadDDS(const std::filesystem::path& path, TextureReplacementData& out);
 
-  static bool ReadPNG(const std::filesystem::path& path,
-                      TextureReplacementData& out);
+  static bool ReadPNG(const std::filesystem::path& path, TextureReplacementData& out);
 };
 
 }  // namespace rex::graphics
