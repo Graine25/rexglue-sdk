@@ -25,6 +25,7 @@
 #include <rex/cvar.h>
 #include <rex/logging.h>
 #include <rex/platform.h>
+#include <rex/platform/env.h>
 
 #if REX_PLATFORM_WIN32
 #include <spdlog/sinks/msvc_sink.h>
@@ -442,6 +443,20 @@ void RemoveSink(LogCategoryId category, spdlog::sink_ptr sink) {
   }
 }
 
+void ReplaceConsoleSink(spdlog::sink_ptr sink) {
+  std::lock_guard lock(g_mutex);
+  for (auto& entry : g_registry) {
+    if (!entry.logger)
+      continue;
+    auto& sinks = entry.logger->sinks();
+    if (g_console_sink)
+      std::erase(sinks, g_console_sink);
+    if (sink)
+      sinks.push_back(sink);
+  }
+  g_console_sink = sink;
+}
+
 void SetConsolePattern(const std::string& pattern) {
   if (g_console_sink)
     g_console_sink->set_pattern(pattern);
@@ -489,11 +504,11 @@ LogConfig BuildLogConfig(const char* log_file, const std::string& cli_level,
   config.default_level = kDefaultLogLevel;
 
   // Environment variable
-  if (const char* env_level = std::getenv("REX_LOG_LEVEL")) {
-    if (auto level = ParseLogLevel(env_level))
+  if (auto env_level = rex::platform::env::get("REX_LOG_LEVEL")) {
+    if (auto level = ParseLogLevel(*env_level))
       config.default_level = *level;
-  } else if (const char* env_level2 = std::getenv("SPDLOG_LEVEL")) {
-    if (auto level = ParseLogLevel(env_level2))
+  } else if (auto env_level2 = rex::platform::env::get("SPDLOG_LEVEL")) {
+    if (auto level = ParseLogLevel(*env_level2))
       config.default_level = *level;
   }
 
