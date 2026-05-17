@@ -338,19 +338,16 @@ X_HANDLE CreateThread_entry(mapped_void lpThreadAttributes, uint32_t dwStackSize
   if (!dwStackSize)
     dwStackSize = REX_KERNEL_STATE()->GetExecutableModule()->stack_size();
   dwStackSize = std::max((uint32_t)0x4000, ((dwStackSize + 0xFFF) & 0xFFFFF000));
-  dwCreationFlags = ((dwCreationFlags >> 2) & 1);
+  u32 x_flags = (dwCreationFlags & 0x4) ? X_CREATE_SUSPENDED : 0;
 
-  auto thread = rex::system::object_ref<rex::system::XThread>(
-      new rex::system::XThread(REX_KERNEL_STATE(), dwStackSize, 0, lpStartAddress.guest_address(),
-                               lpParameter.guest_address(), dwCreationFlags, true, false,
-                               REX_KERNEL_STATE()->GetTitleProcess()));
+  auto thread = rex::system::object_ref<rex::system::XThread>(new rex::system::XThread(
+      REX_KERNEL_STATE(), dwStackSize, 0, lpStartAddress.guest_address(),
+      lpParameter.guest_address(), x_flags, true, false, REX_KERNEL_STATE()->GetTitleProcess()));
 
   rex::X_STATUS result = thread->Create();
   if (XSUCCEEDED(result)) {
     if (lpThreadId)
       *lpThreadId = thread->thread_id();
-    if (dwCreationFlags & 0x80)
-      return thread->guest_object();
     return thread->handle();
   }
   return 0;
@@ -360,11 +357,11 @@ void ExitThread_entry(uint32_t exitCode) {
   rex::system::XThread::GetCurrentThread()->Exit(exitCode);
 }
 
-// Helper function in xam to format timeouts.
+// Converts a Win32 millisecond timeout to a relative Xbox NT timeout (100 ns units).
 uint64_t* XapiFormatTimeOut(uint64_t* TimeOut, uint32_t Millis) {
-  if (Millis == -1)
+  if (Millis == static_cast<uint32_t>(-1))
     return nullptr;
-  *TimeOut = static_cast<uint64_t>(-1) * Millis;
+  *TimeOut = static_cast<uint64_t>(-10000LL * static_cast<int64_t>(Millis));
   return TimeOut;
 }
 
@@ -377,22 +374,11 @@ uint32_t WaitForSingleObjectEx_entry(rex::X_HANDLE handle, uint32_t dwMillisecon
   uint64_t timeout_val;
   uint64_t* timeout = XapiFormatTimeOut(&timeout_val, dwMilliseconds);
 
-  uint32_t result = 0;
-
-  while (!(result & 0x80000000)) {
-    result = obj->Wait(3, 1, bAlertable, timeout);
-
-    if (bAlertable && result == X_STATUS_USER_APC) {
-      rex::system::XThread::GetCurrentThread()->DeliverAPCs();
-      continue;
-    }
-
-    if (!bAlertable || result != X_STATUS_TIMEOUT) {
-      return result;
-    }
+  uint32_t result = obj->Wait(3, 1, bAlertable, timeout);
+  if (bAlertable && result == X_STATUS_USER_APC) {
+    rex::system::XThread::GetCurrentThread()->DeliverAPCs();
   }
-
-  return -1;
+  return result;
 }
 
 uint32_t GetCurrentThreadId_entry() {
