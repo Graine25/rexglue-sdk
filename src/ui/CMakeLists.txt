@@ -26,6 +26,7 @@ set(REXUI_OVERLAY_SOURCES
 # Vulkan UI backend
 set(REXUI_VULKAN_SOURCES
     vulkan/linked_type_descriptor_set_allocator.cpp
+    vulkan/vulkan_moltenvk.cpp
     vulkan/single_layout_descriptor_set_pool.cpp
     vulkan/spirv_tools_context.cpp
     vulkan/ui_samplers.cpp
@@ -60,6 +61,12 @@ if(WIN32)
         surface_win.cpp
         window_win.cpp
         windowed_app_context_win.cpp
+    )
+elseif(APPLE)
+    set(REXUI_PLATFORM_SOURCES
+        surface_sdl.cpp
+        window_mac.cpp
+        windowed_app_context_mac.cpp
     )
 else()
     set(REXUI_PLATFORM_SOURCES
@@ -136,6 +143,8 @@ if(WIN32)
         dwmapi
         Shcore
     )
+elseif(APPLE)
+    target_link_libraries(rexui PUBLIC SDL3::SDL3)
 else()
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(GTK3 REQUIRED gtk+-3.0)
@@ -159,5 +168,3 @@ if(REXGLUE_USE_D3D12)
         dxc-headers
     )
 endif()
-
-

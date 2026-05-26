@@ -14,6 +14,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <type_traits>
 
 #include <rex/chrono/clock.h>
 
@@ -23,6 +24,11 @@ using hundrednano = std::ratio<1, 10000000>;
 namespace chrono {
 
 using hundrednanoseconds = std::chrono::duration<int64_t, hundrednano>;
+
+// https://learn.microsoft.com/en-us/windows/win32/sysinfo/converting-a-time-t-value-to-a-file-time
+// Don't forget the 89 leap days between 1601 and 1970.
+static constexpr std::chrono::seconds seconds_1601_to_1970 =
+    (396 * 365 + 89) * std::chrono::seconds(60 * 60 * 24);
 
 // TODO(JoelLinn) define xstead_clock xsystem_clock etc.
 
@@ -50,16 +56,7 @@ struct NtSystemClock {
   // The delta between std::chrono::system_clock (Jan 1 1970) and NT file
   // time (Jan 1 1601), in seconds. In the spec std::chrono::system_clock's
   // epoch is undefined, but C++20 cements it as Jan 1 1970.
-  static constexpr std::chrono::seconds unix_epoch_delta() {
-    using std::chrono::steady_clock;
-    auto filetime_epoch = std::chrono::year{1601} / std::chrono::month{1} / std::chrono::day{1};
-    auto system_clock_epoch = std::chrono::year{1970} / std::chrono::month{1} / std::chrono::day{1};
-    auto fp =
-        static_cast<std::chrono::sys_seconds>(static_cast<std::chrono::sys_days>(filetime_epoch));
-    auto sp = static_cast<std::chrono::sys_seconds>(
-        static_cast<std::chrono::sys_days>(system_clock_epoch));
-    return fp.time_since_epoch() - sp.time_since_epoch();
-  }
+  static constexpr std::chrono::seconds unix_epoch_delta() { return seconds_1601_to_1970; }
 
  public:
   static constexpr uint64_t to_file_time(time_point const& tp) noexcept {
@@ -115,6 +112,20 @@ using XSystemClock = detail::NtSystemClock<detail::Domain::Guest>;
 }  // namespace rex
 
 namespace std::chrono {
+
+#if defined(_LIBCPP_VERSION) && !__has_include(<__chrono/clock.h>)
+template <class DestinationClock, class SourceClock>
+struct clock_time_conversion;
+
+template <class DestinationClock, class SourceClock, class Duration>
+constexpr auto clock_cast(const std::chrono::time_point<SourceClock, Duration>& tp) {
+  if constexpr (std::is_same_v<DestinationClock, SourceClock>) {
+    return std::chrono::time_point<DestinationClock, Duration>{tp.time_since_epoch()};
+  } else {
+    return clock_time_conversion<DestinationClock, SourceClock>{}(tp);
+  }
+}
+#endif
 
 template <>
 struct clock_time_conversion<::rex::chrono::WinSystemClock, ::rex::chrono::XSystemClock> {
