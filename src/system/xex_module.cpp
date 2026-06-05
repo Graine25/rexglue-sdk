@@ -460,7 +460,9 @@ int XexModule::ReadImage(const void* xex_addr, size_t xex_length, bool use_dev_k
     return 0;
   }
 
-  memory()->LookupHeap(base_address_)->Reset();
+  // Do not reset the whole heap here: manifest codegen and runtime DLL loads can
+  // load multiple XEX images into the same heap. Each image reserves its own range
+  // below, and resetting would discard allocation metadata for earlier modules.
 
   aes_decrypt_buffer(use_dev_key ? xe_xex2_devkit_key : xe_xex2_retail_key,
                      reinterpret_cast<const uint8_t*>(xex_security_info()->aes_key), 16,
