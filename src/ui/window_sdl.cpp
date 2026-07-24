@@ -29,6 +29,10 @@
 
 #if REX_PLATFORM_WIN32
 #include <rex/ui/surface_win.h>
+#elif REX_PLATFORM_MAC
+#include <SDL3/SDL_metal.h>
+
+#include <rex/ui/surface_mac.h>
 #else
 #include <X11/Xlib-xcb.h>
 #include <rex/ui/surface_gnulinux.h>
@@ -309,6 +313,17 @@ std::unique_ptr<Surface> WindowSDL::CreateSurfaceImpl(Surface::TypeFlags allowed
         SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WIN32_INSTANCE_POINTER, nullptr));
     if (hwnd) {
       return std::make_unique<Win32HwndSurface>(hinstance, hwnd);
+    }
+  }
+#elif REX_PLATFORM_MAC
+  if (allowed_types & Surface::kTypeFlag_CAMetalLayer) {
+    SDL_MetalView metal_view = SDL_Metal_CreateView(sdl_window_);
+    if (metal_view) {
+      void* layer = SDL_Metal_GetLayer(metal_view);
+      if (layer) {
+        return std::make_unique<CAMetalLayerSurface>(sdl_window_, metal_view, layer);
+      }
+      SDL_Metal_DestroyView(metal_view);
     }
   }
 #else
