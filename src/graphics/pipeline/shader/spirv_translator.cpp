@@ -514,8 +514,12 @@ void SpirvShaderTranslator::StartTranslation() {
       var_main_rectangle_guest_vertex_index_ =
           builder_->createVariable(spv::NoPrecision, spv::StorageClassFunction, type_uint_,
                                    "xe_var_rectangle_guest_vertex_index", const_uint_0_);
+      // Store only gl_Position (float4) per rectangle vertex, not the whole
+      // gl_PerVertex output block. Only position is ever read back below, and a
+      // local array of the built-in per-vertex block type cannot be emitted as
+      // MSL by SPIRV-Cross (breaks MoltenVK pipeline creation).
       spv::Id type_rectangle_per_vertex_array =
-          builder_->makeArrayType(type_output_per_vertex_, builder_->makeUintConstant(3), 0);
+          builder_->makeArrayType(type_float4_, builder_->makeUintConstant(3), 0);
       var_main_rectangle_per_vertex_ =
           builder_->createVariable(spv::NoPrecision, spv::StorageClassFunction,
                                    type_rectangle_per_vertex_array, "xe_var_rectangle_per_vertex");
@@ -693,11 +697,17 @@ std::vector<uint8_t> SpirvShaderTranslator::CompleteTranslation() {
       spv::Id rectangle_guest_vertex_index_int =
           builder_->createUnaryOp(spv::OpBitcast, type_int_, rectangle_guest_vertex_index);
 
-      // Store current iteration outputs.
+      // Store current iteration outputs. Only gl_Position is persisted (the
+      // rectangle array is float4[3]); load it out of the per-vertex block.
+      id_vector_temp_.clear();
+      id_vector_temp_.push_back(builder_->makeIntConstant(kOutputPerVertexMemberPosition));
+      spv::Id rectangle_vertex_position = builder_->createLoad(
+          builder_->createAccessChain(spv::StorageClassOutput, output_per_vertex_, id_vector_temp_),
+          spv::NoPrecision);
       id_vector_temp_.clear();
       id_vector_temp_.push_back(rectangle_guest_vertex_index_int);
       builder_->createStore(
-          builder_->createLoad(output_per_vertex_, spv::NoPrecision),
+          rectangle_vertex_position,
           builder_->createAccessChain(spv::StorageClassFunction, var_main_rectangle_per_vertex_,
                                       id_vector_temp_));
       uint32_t interpolators_remaining = GetModificationInterpolatorMask();
@@ -901,9 +911,9 @@ std::vector<uint8_t> SpirvShaderTranslator::CompleteTranslation() {
                                   builder_->makeUintConstant(1));
 
         auto load_rectangle_position_xy = [this](spv::Id vertex_index, uint32_t component) {
+          // The rectangle array element is gl_Position (float4) directly.
           id_vector_temp_.clear();
           id_vector_temp_.push_back(vertex_index);
-          id_vector_temp_.push_back(builder_->makeIntConstant(kOutputPerVertexMemberPosition));
           id_vector_temp_.push_back(builder_->makeIntConstant(int(component)));
           return builder_->createLoad(
               builder_->createAccessChain(spv::StorageClassFunction, var_main_rectangle_per_vertex_,
@@ -1003,10 +1013,12 @@ std::vector<uint8_t> SpirvShaderTranslator::CompleteTranslation() {
         }
 
         auto load_rectangle_per_vertex_component =
-            [this](spv::Id vertex_index, uint32_t member_index, spv::Id component_index) {
+            [this](spv::Id vertex_index, [[maybe_unused]] uint32_t member_index,
+                   spv::Id component_index) {
+              // The rectangle array element is gl_Position (float4) directly, so
+              // the per-vertex block member index is no longer part of the path.
               id_vector_temp_.clear();
               id_vector_temp_.push_back(vertex_index);
-              id_vector_temp_.push_back(builder_->makeIntConstant(int(member_index)));
               if (component_index != spv::NoResult) {
                 id_vector_temp_.push_back(component_index);
               }

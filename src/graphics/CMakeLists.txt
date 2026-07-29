@@ -133,6 +133,11 @@ if(REXGLUE_USE_VULKAN)
         OSDependent
         OGLCompiler
     )
+    if(APPLE)
+        # macOS normalizes translated SPIR-V through the SPIRV-Tools optimizer
+        # before handing shaders to MoltenVK (see src/graphics/vulkan/shader.cpp).
+        target_link_libraries(rexgpu-xenos PRIVATE SPIRV-Tools-opt)
+    endif()
 endif()
 
 if(REXGLUE_USE_D3D12)
