@@ -9,6 +9,8 @@ target), and collects the notes from the porting effort.
 | file | what it is |
 |------|-----------|
 | `clean-slate-port-plan.md` | **The plan** — remove ReXGlue's GPU folder and paste Canary 1:1, phase by phase (preserve → remove → paste → translation layer → wire). |
+| `canary-port-status.md` | **Where it landed** — the port compiles + renders (Metal is submitting command buffers). Snapshot of what works, the known guest-CRT crash (not the GPU), and the current "too drastic" surface (compat headers, renames, seams) with numbers. |
+| `reconcile-toward-upstream.md` | **Phase 5** — shrink the divergence. Batch the poured files, diff each against upstream Canary, classify every hunk (mechanical / seam / gratuitous / compat-alias), revert the gratuitous, and dissolve `xe_compat.h` into `rex::` proper + the codemod. |
 | `master-vs-canary-comparison.md` | Generated file-level diff: new files in canary, removed files, and every changed common file ranked by churn. Start here for the shape of the delta. |
 | `canary-header-dependencies.md` | What the canary GPU **headers** pull in from *outside* the GPU folder (base/ui/kernel/cpu), mapped to whether ReXGlue has an equivalent, a rename, or nothing (must add manually). This is the compatibility-layer checklist. |
 | `DRIFT-notes.md` | The main working notes — worksheet, per-subsystem status, the seam taxonomy, the PM4 command-processor decision, the base-layer findings, the glslang-16 scoping, and the **approach pivot** (pour Canary files 1:1 + one translation layer, instead of 3-way merging onto the diverged fork). |
