@@ -68,6 +68,10 @@ if(WIN32)
     set(REXUI_PLATFORM_SOURCES
         surface_win.cpp
     )
+elseif(APPLE)
+    set(REXUI_PLATFORM_SOURCES
+        surface_mac.cpp
+    )
 else()
     set(REXUI_PLATFORM_SOURCES
         surface_gnulinux.cpp
@@ -151,6 +155,8 @@ if(UNIX AND NOT APPLE)
     target_link_libraries(rexui PUBLIC
         ${X11_XCB_LIBRARIES}
     )
+elseif(APPLE)
+    target_link_libraries(rexui PRIVATE "-framework CoreFoundation")
 endif()
 
 # D3D12 backend dependencies
@@ -161,5 +167,4 @@ if(REXGLUE_USE_D3D12)
         dxc-headers
     )
 endif()
-
 
