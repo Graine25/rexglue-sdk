@@ -1,4 +1,3 @@
-#pragma once
 /**
  ******************************************************************************
  * Xenia : Xbox 360 Emulator Research Project                                 *
@@ -6,9 +5,10 @@
  * Copyright 2023 Ben Vanik. All rights reserved.                             *
  * Released under the BSD license - see LICENSE in the root for more details. *
  ******************************************************************************
- *
- * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
  */
+
+#ifndef XENIA_GPU_SPIRV_BUILDER_H_
+#define XENIA_GPU_SPIRV_BUILDER_H_
 
 #include <memory>
 #include <optional>
@@ -16,8 +16,8 @@
 #include <vector>
 
 #include <SPIRV/SpvBuilder.h>
-
 #include <rex/assert.h>
+#include <rex/graphics/xe_compat.h>
 
 namespace rex::graphics {
 
@@ -25,32 +25,82 @@ namespace rex::graphics {
 
 class SpirvBuilder : public spv::Builder {
  public:
-  SpirvBuilder(unsigned int spv_version, unsigned int user_number, spv::SpvBuildLogger* logger)
+  SpirvBuilder(unsigned int spv_version, unsigned int user_number,
+               spv::SpvBuildLogger* logger)
       : spv::Builder(spv_version, user_number, logger) {}
 
   // Make public rather than protected.
   using spv::Builder::createSelectionMerge;
 
-  spv::Id createQuadOp(spv::Op op_code, spv::Id type_id, spv::Id operand1, spv::Id operand2,
-                       spv::Id operand3, spv::Id operand4);
+  // Backward compatibility wrapper for createBranch
+  void createBranch(spv::Block* block) {
+    spv::Builder::createBranch(true, block);
+  }
 
-  spv::Id createNoContractionUnaryOp(spv::Op op_code, spv::Id type_id, spv::Id operand);
-  spv::Id createNoContractionBinOp(spv::Op op_code, spv::Id type_id, spv::Id operand1,
-                                   spv::Id operand2);
+  // Backward compatibility wrapper for makeFunctionEntry
+  // For shaders, we use LinkageType::Max which means no linkage decoration
+  spv::Function* makeFunctionEntry(
+      spv::Decoration precision, spv::Id returnType, const char* name,
+      const std::vector<spv::Id>& paramTypes,
+      const std::vector<std::vector<spv::Decoration>>& precisions,
+      spv::Block** entry = nullptr) {
+    // LinkageType::Max means no linkage decoration will be added (correct for
+    // shader entry points)
+    return spv::Builder::makeFunctionEntry(precision, returnType, name,
+                                           spv::LinkageType::Max, paramTypes,
+                                           precisions, entry);
+  }
 
-  spv::Id createUnaryBuiltinCall(spv::Id result_type, spv::Id builtins, int entry_point,
-                                 spv::Id operand);
-  spv::Id createBinBuiltinCall(spv::Id result_type, spv::Id builtins, int entry_point,
-                               spv::Id operand1, spv::Id operand2);
-  spv::Id createTriBuiltinCall(spv::Id result_type, spv::Id builtins, int entry_point,
-                               spv::Id operand1, spv::Id operand2, spv::Id operand3);
+  // Hide base class createAccessChain to workaround the way
+  // glslang 11.6.0+ uses internal accessChain state instead of parameters.
+  spv::Id createAccessChain(spv::StorageClass storage_class, spv::Id base,
+                            const std::vector<spv::Id>& offsets) {
+    // glslang 11.6.0+ uses the accessChain member
+    // in getResultingAccessChainType() but doesn't populate it from the
+    // parameters. We need to set it up correctly before calling the parent.
+    clearAccessChain();
+    setAccessChainLValue(base);
+    for (const auto& offset : offsets) {
+      accessChainPush(offset, {}, 0);
+    }
+
+    spv::Id result =
+        spv::Builder::createAccessChain(storage_class, base, offsets);
+
+    // Clear the state again to avoid affecting subsequent operations
+    clearAccessChain();
+
+    return result;
+  }
+
+  spv::Id createQuadOp(spv::Op op_code, spv::Id type_id, spv::Id operand1,
+                       spv::Id operand2, spv::Id operand3, spv::Id operand4);
+
+  spv::Id createNoContractionUnaryOp(spv::Op op_code, spv::Id type_id,
+                                     spv::Id operand);
+  spv::Id createNoContractionBinOp(spv::Op op_code, spv::Id type_id,
+                                   spv::Id operand1, spv::Id operand2);
+
+  spv::Id createUnaryBuiltinCall(spv::Id result_type, spv::Id builtins,
+                                 int entry_point, spv::Id operand);
+  spv::Id createBinBuiltinCall(spv::Id result_type, spv::Id builtins,
+                               int entry_point, spv::Id operand1,
+                               spv::Id operand2);
+  spv::Id createTriBuiltinCall(spv::Id result_type, spv::Id builtins,
+                               int entry_point, spv::Id operand1,
+                               spv::Id operand2, spv::Id operand3);
+
+  // Makes a constant of a float scalar or vector value_type with all
+  // components set to value.
+  spv::Id smearFloatConstant(float value, spv::Id value_type);
 
   // Helper to use for building nested control flow with if-then-else with
   // additions over SpvBuilder::If.
   class IfBuilder {
    public:
-    IfBuilder(spv::Id condition, unsigned int control, SpirvBuilder& builder,
-              unsigned int thenWeight = 0, unsigned int elseWeight = 0);
+    IfBuilder(spv::Id condition, spv::SelectionControlMask control,
+              SpirvBuilder& builder, unsigned int thenWeight = 0,
+              unsigned int elseWeight = 0);
 
     ~IfBuilder() {
 #ifndef NDEBUG
@@ -80,7 +130,7 @@ class SpirvBuilder : public spv::Builder {
 
     SpirvBuilder& builder;
     spv::Id condition;
-    unsigned int control;
+    spv::SelectionControlMask control;
     unsigned int thenWeight;
     unsigned int elseWeight;
 
@@ -103,7 +153,8 @@ class SpirvBuilder : public spv::Builder {
   // block) compared to makeSwitch.
   class SwitchBuilder {
    public:
-    SwitchBuilder(spv::Id selector, unsigned int selection_control, SpirvBuilder& builder);
+    SwitchBuilder(spv::Id selector, spv::SelectionControlMask selection_control,
+                  SpirvBuilder& builder);
     ~SwitchBuilder() { assert_true(current_branch_ == Branch::kMerge); }
 
     void makeBeginDefault();
@@ -127,7 +178,7 @@ class SpirvBuilder : public spv::Builder {
 
     SpirvBuilder& builder_;
     spv::Id selector_;
-    unsigned int selection_control_;
+    spv::SelectionControlMask selection_control_;
 
     spv::Function& function_;
 
@@ -144,3 +195,5 @@ class SpirvBuilder : public spv::Builder {
 };
 
 }  // namespace rex::graphics
+
+#endif  // XENIA_GPU_SPIRV_BUILDER_H_

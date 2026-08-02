@@ -5,11 +5,10 @@
  * Copyright 2020 Ben Vanik. All rights reserved.                             *
  * Released under the BSD license - see LICENSE in the root for more details. *
  ******************************************************************************
- *
- * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
  */
 
-#pragma once
+#ifndef XENIA_GPU_D3D12_D3D12_SHARED_MEMORY_H_
+#define XENIA_GPU_D3D12_D3D12_SHARED_MEMORY_H_
 
 #include <algorithm>
 #include <memory>
@@ -18,9 +17,10 @@
 
 #include <rex/graphics/shared_memory.h>
 #include <rex/graphics/trace_writer.h>
-#include <rex/memory.h>
+#include <rex/system/xmemory.h>
 #include <rex/ui/d3d12/d3d12_api.h>
 #include <rex/ui/d3d12/d3d12_upload_buffer_pool.h>
+#include <rex/graphics/xe_compat.h>
 
 namespace rex::graphics::d3d12 {
 
@@ -28,7 +28,7 @@ class D3D12CommandProcessor;
 
 class D3D12SharedMemory : public SharedMemory {
  public:
-  D3D12SharedMemory(D3D12CommandProcessor& command_processor, memory::Memory& memory,
+  D3D12SharedMemory(D3D12CommandProcessor& command_processor, Memory& memory,
                     TraceWriter& trace_writer);
   ~D3D12SharedMemory() override;
 
@@ -37,7 +37,9 @@ class D3D12SharedMemory : public SharedMemory {
   void ClearCache() override;
 
   ID3D12Resource* GetBuffer() const { return buffer_; }
-  D3D12_GPU_VIRTUAL_ADDRESS GetGPUAddress() const { return buffer_gpu_address_; }
+  D3D12_GPU_VIRTUAL_ADDRESS GetGPUAddress() const {
+    return buffer_gpu_address_;
+  }
 
   void CompletedSubmissionUpdated();
   void BeginSubmission();
@@ -48,16 +50,19 @@ class D3D12SharedMemory : public SharedMemory {
   // Makes the buffer usable for vertices, indices and texture untiling.
   void UseForReading() {
     // Vertex fetch is also allowed in pixel shaders.
-    CommitUAVWritesAndTransitionBuffer(D3D12_RESOURCE_STATE_INDEX_BUFFER |
-                                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE |
-                                       D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    CommitUAVWritesAndTransitionBuffer(
+        D3D12_RESOURCE_STATE_INDEX_BUFFER |
+        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE |
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
   }
   // Makes the buffer usable for texture tiling after a resolve.
   void UseForWriting() {
     CommitUAVWritesAndTransitionBuffer(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
   }
   // Makes the buffer usable as a source for copy commands.
-  void UseAsCopySource() { CommitUAVWritesAndTransitionBuffer(D3D12_RESOURCE_STATE_COPY_SOURCE); }
+  void UseAsCopySource() {
+    CommitUAVWritesAndTransitionBuffer(D3D12_RESOURCE_STATE_COPY_SOURCE);
+  }
   // Must be called when doing draws/dispatches modifying data within the shared
   // memory buffer as a UAV, to make sure that when UseForWriting is called the
   // next time, a UAV barrier will be done, and subsequent overlapping UAV
@@ -70,12 +75,6 @@ class D3D12SharedMemory : public SharedMemory {
 
   void WriteRawSRVDescriptor(D3D12_CPU_DESCRIPTOR_HANDLE handle);
   void WriteRawUAVDescriptor(D3D12_CPU_DESCRIPTOR_HANDLE handle);
-  // Due to the D3D12_REQ_BUFFER_RESOURCE_TEXEL_COUNT_2_TO_EXP limitation, the
-  // smallest supported formats are 32-bit.
-  void WriteUintPow2SRVDescriptor(D3D12_CPU_DESCRIPTOR_HANDLE handle,
-                                  uint32_t element_size_bytes_pow2);
-  void WriteUintPow2UAVDescriptor(D3D12_CPU_DESCRIPTOR_HANDLE handle,
-                                  uint32_t element_size_bytes_pow2);
 
   // Returns true if any downloads were submitted to the command processor.
   bool InitializeTraceSubmitDownloads();
@@ -85,7 +84,8 @@ class D3D12SharedMemory : public SharedMemory {
   bool AllocateSparseHostGpuMemoryRange(uint32_t offset_allocations,
                                         uint32_t length_allocations) override;
 
-  bool UploadRanges(const std::vector<std::pair<uint32_t, uint32_t>>& upload_page_ranges) override;
+  bool UploadRanges(const std::pair<uint32_t, uint32_t>* upload_page_ranges,
+                    uint32_t num_ranges) override;
 
  private:
   D3D12CommandProcessor& command_processor_;
@@ -103,13 +103,7 @@ class D3D12SharedMemory : public SharedMemory {
   // rather than creation).
   enum class BufferDescriptorIndex : uint32_t {
     kRawSRV,
-    kR32UintSRV,
-    kR32G32UintSRV,
-    kR32G32B32A32UintSRV,
     kRawUAV,
-    kR32UintUAV,
-    kR32G32UintUAV,
-    kR32G32B32A32UintUAV,
 
     kCount,
   };
@@ -124,3 +118,5 @@ class D3D12SharedMemory : public SharedMemory {
 };
 
 }  // namespace rex::graphics::d3d12
+
+#endif  // XENIA_GPU_D3D12_D3D12_SHARED_MEMORY_H_

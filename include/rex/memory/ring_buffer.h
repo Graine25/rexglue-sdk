@@ -77,6 +77,13 @@ class RingBuffer {
     ring_size_t second_length;
   };
   ReadRange BeginRead(size_t count);
+  // Xenia's BeginPrefetchedRead = BeginRead + a swcache prefetch hint. ReXGlue
+  // drops the prefetch (perf-only); the tag template argument is accepted and
+  // ignored so the poured GPU code compiles unchanged.
+  template <auto kPrefetchTag>
+  ReadRange BeginPrefetchedRead(size_t count) {
+    return BeginRead(count);
+  }
   void EndRead(ReadRange read_range);
 
   size_t Read(uint8_t* buffer, size_t count);

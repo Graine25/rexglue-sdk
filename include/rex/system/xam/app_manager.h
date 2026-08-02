@@ -20,7 +20,9 @@
 #include <rex/system/xtypes.h>
 
 namespace rex {
-class Memory;
+namespace memory {
+class Memory;  // guest Memory (used below as memory::Memory*)
+}  // namespace memory
 namespace system {
 class KernelState;
 }  // namespace system

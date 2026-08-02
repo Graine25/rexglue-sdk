@@ -5,18 +5,18 @@
  * Copyright 2020 Ben Vanik. All rights reserved.                             *
  * Released under the BSD license - see LICENSE in the root for more details. *
  ******************************************************************************
- *
- * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
  */
 
-#pragma once
+#ifndef XENIA_GPU_TRACE_PROTOCOL_H_
+#define XENIA_GPU_TRACE_PROTOCOL_H_
 
 #include <cstdint>
+#include <rex/graphics/xe_compat.h>
 
 namespace rex::graphics {
 
 // Trace file extension.
-static const char kTraceExtension[] = "xtr";
+static constexpr char kTraceExtension[] = "xtr";
 
 // Any byte changes to the files should bump this version.
 // Only builds with matching versions will work.
@@ -171,3 +171,5 @@ struct GammaRampCommand {
 };
 
 }  // namespace rex::graphics
+
+#endif  // XENIA_GPU_TRACE_PROTOCOL_H_

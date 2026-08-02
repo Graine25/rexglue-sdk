@@ -168,6 +168,15 @@ class VulkanDevice {
     // VK_EXT_robustness2
 
     bool nullDescriptor = false;
+
+    // VK_EXT_host_query_reset (#262, promoted to 1.2). Used by the Xenos ZPD
+    // occlusion-query pool to reset query slots on the CPU.
+    bool hostQueryReset = false;
+
+    // VK_KHR_portability_subset::triangleFans. Whether triangle-fan primitive
+    // topology is supported (false on MoltenVK); the primitive processor converts
+    // fans when unsupported.
+    bool triangleFans = false;
   };
 
   // Properties of the core API and enabled extensions, and enabled features.
@@ -205,6 +214,11 @@ class VulkanDevice {
 
   VkDevice device() const { return device_; }
 
+  // rexglue: Vulkan device-lost detection. ReXGlue's VulkanDevice does not yet
+  // track VK_ERROR_DEVICE_LOST, so this is stubbed false; device-loss recovery
+  // (OnHostGpuLossFromAnyThread) will not trigger until this is wired. TODO.
+  bool IsLost() const { return false; }
+
   struct Functions {
 #define XE_UI_VULKAN_FUNCTION(name) PFN_##name name = nullptr;
 #define XE_UI_VULKAN_FUNCTION_PROMOTED(extension_name, core_name) \
@@ -216,6 +230,8 @@ class VulkanDevice {
 #include <rex/ui/vulkan/functions/device_1_1_khr_get_memory_requirements2.inc>
     // VK_KHR_bind_memory2 (#158, promoted to 1.1)
 #include <rex/ui/vulkan/functions/device_1_1_khr_bind_memory2.inc>
+    // VK_EXT_host_query_reset (#262, promoted to 1.2)
+#include <rex/ui/vulkan/functions/device_1_2_host_query_reset.inc>
     // VK_KHR_maintenance4 (#414, promoted to 1.3)
 #include <rex/ui/vulkan/functions/device_1_3_khr_maintenance4.inc>
     // VK_KHR_dynamic_rendering (#55, promoted to 1.3)

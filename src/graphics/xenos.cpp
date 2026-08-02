@@ -5,15 +5,11 @@
  * Copyright 2020 Ben Vanik. All rights reserved.                             *
  * Released under the BSD license - see LICENSE in the root for more details. *
  ******************************************************************************
- *
- * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
  */
 
-#include <cmath>
-
 #include <rex/graphics/xenos.h>
-#include <rex/math.h>
 #include <rex/memory.h>
+#include <rex/graphics/xe_compat.h>
 
 namespace rex::graphics {
 namespace xenos {
@@ -27,7 +23,7 @@ namespace xenos {
 float PWLGammaToLinear(float gamma) {
   // Not found in game executables, so just using the logic similar to that in
   // the Source Engine.
-  gamma = rex::saturate(gamma);
+  gamma = xe::saturate(gamma);
   float scale, offset;
   // While the compiled code for linear to gamma conversion uses `vcmpgtfp
   // constant, value` comparison (constant > value, or value < constant), it's
@@ -68,7 +64,7 @@ float PWLGammaToLinear(float gamma) {
 }
 
 float LinearToPWLGamma(float linear) {
-  linear = rex::saturate(linear);
+  linear = xe::saturate(linear);
   float scale, offset;
   // While the compiled code uses `vcmpgtfp constant, value` comparison
   // (constant > value, or value < constant), it's preferable to use `value >=
@@ -115,23 +111,24 @@ float Float7e3To32(uint32_t f10) {
   if (!exponent) {
     // Normalize the value in the resulting float.
     // do { Exponent--; Mantissa <<= 1; } while ((Mantissa & 0x80) == 0)
-    uint32_t mantissa_lzcnt = rex::lzcnt(mantissa) - (32 - 8);
+    uint32_t mantissa_lzcnt = xe::lzcnt(mantissa) - (32 - 8);
     exponent = uint32_t(1 - int32_t(mantissa_lzcnt));
     mantissa = (mantissa << mantissa_lzcnt) & 0x7F;
   }
-  return rex::memory::Reinterpret<float>(uint32_t(((exponent + 124) << 23) | (mantissa << 3)));
+  return xe::memory::Reinterpret<float>(
+      uint32_t(((exponent + 124) << 23) | (mantissa << 3)));
 }
 
 // Based on CFloat24 from d3dref9.dll and the 6e4 code from:
 // https://github.com/Microsoft/DirectXTex/blob/master/DirectXTex/DirectXTexConvert.cpp
 // 6e4 has a different exponent bias allowing [0,512) values, 20e4 allows [0,2).
-
-uint32_t Float32To20e4(float f32, bool round_to_nearest_even) {
+XE_NOALIAS
+uint32_t Float32To20e4(float f32, bool round_to_nearest_even) noexcept {
   if (!(f32 > 0.0f)) {
     // Positive only, and not -0 or NaN.
     return 0;
   }
-  auto f32u32 = rex::memory::Reinterpret<uint32_t>(f32);
+  auto f32u32 = xe::memory::Reinterpret<uint32_t>(f32);
   if (f32u32 >= 0x3FFFFFF8) {
     // Saturate.
     return 0xFFFFFF;
@@ -150,8 +147,8 @@ uint32_t Float32To20e4(float f32, bool round_to_nearest_even) {
   }
   return (f32u32 >> 3) & 0xFFFFFF;
 }
-
-float Float20e4To32(uint32_t f24) {
+XE_NOALIAS
+float Float20e4To32(uint32_t f24) noexcept {
   f24 &= 0xFFFFFF;
   if (!f24) {
     return 0.0f;
@@ -161,11 +158,12 @@ float Float20e4To32(uint32_t f24) {
   if (!exponent) {
     // Normalize the value in the resulting float.
     // do { Exponent--; Mantissa <<= 1; } while ((Mantissa & 0x100000) == 0)
-    uint32_t mantissa_lzcnt = rex::lzcnt(mantissa) - (32 - 21);
+    uint32_t mantissa_lzcnt = xe::lzcnt(mantissa) - (32 - 21);
     exponent = uint32_t(1 - int32_t(mantissa_lzcnt));
     mantissa = (mantissa << mantissa_lzcnt) & 0xFFFFF;
   }
-  return rex::memory::Reinterpret<float>(uint32_t(((exponent + 112) << 23) | (mantissa << 3)));
+  return xe::memory::Reinterpret<float>(
+      uint32_t(((exponent + 112) << 23) | (mantissa << 3)));
 }
 
 const char* GetColorRenderTargetFormatName(ColorRenderTargetFormat format) {
@@ -209,6 +207,38 @@ const char* GetDepthRenderTargetFormatName(DepthRenderTargetFormat format) {
       return "kUnknown";
   }
 }
+static const char* const g_endian_names[] = {"none", "8 in 16", "8 in 32",
+                                             "16 in 32"};
 
+const char* GetEndianEnglishDescription(xenos::Endian endian) {
+  return g_endian_names[static_cast<uint32_t>(endian)];
+}
+static const char* const g_primtype_human_names[] = {"none",
+                                                     "point list",
+                                                     "line list",
+                                                     "line strip",
+                                                     "triangle list",
+                                                     "triangle fan",
+                                                     "triangle strip",
+                                                     "triangle with flags",
+                                                     "rectangle list",
+                                                     "unused1",
+                                                     "unused2",
+                                                     "unused3",
+                                                     "line loop",
+                                                     "quad list",
+                                                     "quad strip",
+                                                     "polygon",
+                                                     "2D copy rect list v0",
+                                                     "2D copy rect list v1",
+                                                     "2D copy rect list v2",
+                                                     "2D copy rect list v3",
+                                                     "2D fillrect list",
+                                                     "2D line strip",
+                                                     "2D triangle strip"};
+
+const char* GetPrimitiveTypeEnglishDescription(xenos::PrimitiveType prim_type) {
+  return g_primtype_human_names[static_cast<uint32_t>(prim_type)];
+}
 }  // namespace xenos
 }  // namespace rex::graphics

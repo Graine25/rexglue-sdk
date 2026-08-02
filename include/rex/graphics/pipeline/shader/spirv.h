@@ -1,4 +1,3 @@
-#pragma once
 /**
  ******************************************************************************
  * Xenia : Xbox 360 Emulator Research Project                                 *
@@ -6,9 +5,10 @@
  * Copyright 2022 Ben Vanik. All rights reserved.                             *
  * Released under the BSD license - see LICENSE in the root for more details. *
  ******************************************************************************
- *
- * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
  */
+
+#ifndef XENIA_GPU_SPIRV_SHADER_H_
+#define XENIA_GPU_SPIRV_SHADER_H_
 
 #include <atomic>
 #include <vector>
@@ -16,6 +16,7 @@
 #include <rex/graphics/pipeline/shader/shader.h>
 #include <rex/graphics/pipeline/shader/spirv_translator.h>
 #include <rex/graphics/xenos.h>
+#include <rex/graphics/xe_compat.h>
 
 namespace rex::graphics {
 
@@ -42,10 +43,13 @@ class SpirvShader : public Shader {
     uint32_t is_signed : 1;
   };
   // Safe to hash and compare with memcmp for layout hashing.
-  const std::vector<TextureBinding>& GetTextureBindingsAfterTranslation() const {
+  const std::vector<TextureBinding>& GetTextureBindingsAfterTranslation()
+      const {
     return texture_bindings_;
   }
-  const uint32_t GetUsedTextureMaskAfterTranslation() const { return used_texture_mask_; }
+  const uint32_t GetUsedTextureMaskAfterTranslation() const {
+    return used_texture_mask_;
+  }
 
   struct SamplerBinding {
     uint32_t fetch_constant : 5;
@@ -54,7 +58,8 @@ class SpirvShader : public Shader {
     xenos::TextureFilter mip_filter : 2;
     xenos::AnisoFilter aniso_filter : 3;
   };
-  const std::vector<SamplerBinding>& GetSamplerBindingsAfterTranslation() const {
+  const std::vector<SamplerBinding>& GetSamplerBindingsAfterTranslation()
+      const {
     return sampler_bindings_;
   }
 
@@ -71,3 +76,5 @@ class SpirvShader : public Shader {
 };
 
 }  // namespace rex::graphics
+
+#endif  // XENIA_GPU_SPIRV_SHADER_H_

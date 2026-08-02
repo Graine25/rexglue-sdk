@@ -1,4 +1,3 @@
-#pragma once
 /**
  ******************************************************************************
  * Xenia : Xbox 360 Emulator Research Project                                 *
@@ -6,9 +5,10 @@
  * Copyright 2022 Ben Vanik. All rights reserved.                             *
  * Released under the BSD license - see LICENSE in the root for more details. *
  ******************************************************************************
- *
- * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
  */
+
+#ifndef XENIA_GPU_DRAW_UTIL_H_
+#define XENIA_GPU_DRAW_UTIL_H_
 
 #include <cmath>
 #include <cstdint>
@@ -16,18 +16,20 @@
 #include <vector>
 
 #include <rex/assert.h>
-#include <rex/graphics/pipeline/shader/shader.h>
 #include <rex/graphics/register_file.h>
-#include <rex/graphics/registers.h>
+#include <rex/graphics/pipeline/shader/shader.h>
 #include <rex/graphics/trace_writer.h>
 #include <rex/graphics/xenos.h>
-#include <rex/memory.h>
+#include <rex/system/xmemory.h>
+#include <rex/graphics/xe_compat.h>
 
-namespace rex::graphics::draw_util {
+namespace rex::graphics {
+namespace draw_util {
 
 constexpr bool IsPrimitiveLine(bool vgt_output_path_is_tessellation_enable,
                                xenos::PrimitiveType type) {
-  if (vgt_output_path_is_tessellation_enable && type == xenos::PrimitiveType::kLinePatch) {
+  if (vgt_output_path_is_tessellation_enable &&
+      type == xenos::PrimitiveType::kLinePatch) {
     // For patch primitive types, the major mode is always explicit, so just
     // checking if VGT_OUTPUT_PATH_CNTL::path_select is kTessellationEnable is
     // enough.
@@ -51,6 +53,26 @@ inline bool IsPrimitiveLine(const RegisterFile& regs) {
                          regs.Get<reg::VGT_DRAW_INITIATOR>().prim_type);
 }
 
+constexpr uint32_t EncodeIsPrimitivePolygonalTable() {
+  unsigned result = 0;
+#define TRUEFOR(x) \
+  result |= 1U << static_cast<uint32_t>(xenos::PrimitiveType::x)
+
+  TRUEFOR(kTriangleList);
+  TRUEFOR(kTriangleFan);
+  TRUEFOR(kTriangleStrip);
+  TRUEFOR(kTriangleWithWFlags);
+  TRUEFOR(kQuadList);
+  TRUEFOR(kQuadStrip);
+  TRUEFOR(kPolygon);
+#undef TRUEFOR
+  // TODO(Triang3l): Investigate how kRectangleList should be treated - possibly
+  // actually drawn as two polygons on the console, however, the current
+  // geometry shader doesn't care about the winding order - allowing backface
+  // culling for rectangles currently breaks 4D53082D.
+  return result;
+}
+
 // Polygonal primitive types (not including points and lines) are rasterized as
 // triangles, have front and back faces, and also support face culling and fill
 // modes (polymode_front_ptype, polymode_back_ptype). Other primitive types are
@@ -59,38 +81,30 @@ inline bool IsPrimitiveLine(const RegisterFile& regs) {
 // GL_FRONT_AND_BACK, points and lines are still drawn), and may in some cases
 // use the "para" registers instead of "front" or "back" (for "parallelogram" -
 // like poly_offset_para_enable).
+XE_FORCEINLINE
 constexpr bool IsPrimitivePolygonal(bool vgt_output_path_is_tessellation_enable,
                                     xenos::PrimitiveType type) {
   if (vgt_output_path_is_tessellation_enable &&
-      (type == xenos::PrimitiveType::kTrianglePatch || type == xenos::PrimitiveType::kQuadPatch)) {
+      (type == xenos::PrimitiveType::kTrianglePatch ||
+       type == xenos::PrimitiveType::kQuadPatch)) {
     // For patch primitive types, the major mode is always explicit, so just
     // checking if VGT_OUTPUT_PATH_CNTL::path_select is kTessellationEnable is
     // enough.
     return true;
   }
-  switch (type) {
-    case xenos::PrimitiveType::kTriangleList:
-    case xenos::PrimitiveType::kTriangleFan:
-    case xenos::PrimitiveType::kTriangleStrip:
-    case xenos::PrimitiveType::kTriangleWithWFlags:
-    case xenos::PrimitiveType::kQuadList:
-    case xenos::PrimitiveType::kQuadStrip:
-    case xenos::PrimitiveType::kPolygon:
-      return true;
-    default:
-      break;
-  }
-  // TODO(Triang3l): Investigate how kRectangleList should be treated - possibly
-  // actually drawn as two polygons on the console, however, the current
-  // geometry shader doesn't care about the winding order - allowing backface
-  // culling for rectangles currently breaks 4D53082D.
-  return false;
-}
+  // chrispy: expensive jumptable, use bit table instead
 
-inline bool IsPrimitivePolygonal(const RegisterFile& regs) {
-  return IsPrimitivePolygonal(regs.Get<reg::VGT_OUTPUT_PATH_CNTL>().path_select ==
-                                  xenos::VGTOutputPath::kTessellationEnable,
-                              regs.Get<reg::VGT_DRAW_INITIATOR>().prim_type);
+  constexpr uint32_t primitive_polygonal_table =
+      EncodeIsPrimitivePolygonalTable();
+
+  return (primitive_polygonal_table & (1U << static_cast<uint32_t>(type))) != 0;
+}
+XE_FORCEINLINE
+static bool IsPrimitivePolygonal(const RegisterFile& regs) {
+  return IsPrimitivePolygonal(
+      regs.Get<reg::VGT_OUTPUT_PATH_CNTL>().path_select ==
+          xenos::VGTOutputPath::kTessellationEnable,
+      regs.Get<reg::VGT_DRAW_INITIATOR>().prim_type);
 }
 
 // Whether with the current state, any samples to rasterize (for any reason, not
@@ -100,7 +114,8 @@ inline bool IsPrimitivePolygonal(const RegisterFile& regs) {
 // cases (for both the guest and usual host implementations), not everything
 // like whether viewport / scissor are empty (until this truly matters in any
 // game, of course).
-bool IsRasterizationPotentiallyDone(const RegisterFile& regs, bool primitive_polygonal);
+bool IsRasterizationPotentiallyDone(const RegisterFile& regs,
+                                    bool primitive_polygonal);
 
 // Direct3D 10.1+ standard sample positions, also used in Vulkan, for
 // calculations related to host MSAA, in 1/16th of a pixel.
@@ -162,7 +177,8 @@ reg::RB_DEPTHCONTROL GetNormalizedDepthControl(const RegisterFile& regs);
 // a primitive in the [0.5, 1) range (the worst case that forward depth reaches
 // very quickly, at nearly `2 * near clipping plane distance`) is 2 ^ (-1 - 23),
 // or 2^-24, and this factor is almost 2^24.
-constexpr float kD3D10PolygonOffsetFactorUnorm24 = float((UINT32_C(1) << 24) - 1);
+constexpr float kD3D10PolygonOffsetFactorUnorm24 =
+    float((UINT32_C(1) << 24) - 1);
 
 // For a host floating-point depth buffer, the integer value of the depth bias
 // is roughly how many ULPs primitives should be separated by.
@@ -193,17 +209,19 @@ constexpr float kD3D10PolygonOffsetFactorUnorm24 = float((UINT32_C(1) << 24) - 1
 // and the maximum Z value in the primitive will have an exponent lowered by 1,
 // thus the result will also have an exponent lowered by 1 - exactly what's
 // needed for remapping 0...1 to 0...0.5.
-constexpr float kD3D10PolygonOffsetFactorFloat24 = float(UINT32_C(1) << (21 + 3));
+constexpr float kD3D10PolygonOffsetFactorFloat24 =
+    float(UINT32_C(1) << (21 + 3));
 
-inline int32_t GetD3D10IntegerPolygonOffset(xenos::DepthRenderTargetFormat depth_format,
-                                            float polygon_offset) {
+inline int32_t GetD3D10IntegerPolygonOffset(
+    xenos::DepthRenderTargetFormat depth_format, float polygon_offset) {
   bool is_float24 = depth_format == xenos::DepthRenderTargetFormat::kD24FS8;
   // Using `ceil` because more offset is better, especially if flooring would
   // result in 0 - conceptually, if the offset is used at all, primitives need
   // to be separated in the depth buffer.
-  int32_t polygon_offset_int = int32_t(std::ceil(
-      std::abs(polygon_offset) * (is_float24 ? kD3D10PolygonOffsetFactorFloat24 * (1.0f / 8.0f)
-                                             : kD3D10PolygonOffsetFactorUnorm24)));
+  int32_t polygon_offset_int = int32_t(
+      std::ceil(std::abs(polygon_offset) *
+                (is_float24 ? kD3D10PolygonOffsetFactorFloat24 * (1.0f / 8.0f)
+                            : kD3D10PolygonOffsetFactorUnorm24)));
   // For float24, the conversion may be done in the translated pixel shaders,
   // including via truncation rather than rounding to the nearest. So, making
   // the integer bias always in the increments of 2^3 (2 ^ the difference in the
@@ -221,8 +239,9 @@ inline int32_t GetD3D10IntegerPolygonOffset(xenos::DepthRenderTargetFormat depth
 // registers (the scale is for 1/16 subpixels, multiply by
 // xenos::kPolygonOffsetScaleSubpixelUnit outside if the value for pixels is
 // needed).
-void GetPreferredFacePolygonOffset(const RegisterFile& regs, bool primitive_polygonal,
-                                   float& scale_out, float& offset_out);
+void GetPreferredFacePolygonOffset(const RegisterFile& regs,
+                                   bool primitive_polygonal, float& scale_out,
+                                   float& offset_out);
 
 inline bool DoesCoverageDependOnAlpha(reg::RB_COLORCONTROL rb_colorcontrol) {
   return (rb_colorcontrol.alpha_test_enable &&
@@ -238,11 +257,10 @@ inline bool DoesCoverageDependOnAlpha(reg::RB_COLORCONTROL rb_colorcontrol) {
 // some reason in different games with a leftover pixel shader from the previous
 // draw, but with SQ_PROGRAM_CNTL destroyed, reducing the number of
 // unpredictable unneeded translations of random shaders with different host
-// modification bits, such as register count and depth format-related.
-// include_memory_export may be set to false to evaluate whether the pixel
-// shader has any side effects other than memexport.
-bool IsPixelShaderNeededWithRasterization(const Shader& shader, const RegisterFile& regs,
-                                          bool include_memory_export = true);
+// modification bits, such as register count and depth format-related (though
+// shaders with side effects on depth or memory export will still be preserved).
+bool IsPixelShaderNeededWithRasterization(const Shader& shader,
+                                          const RegisterFile& regs);
 
 struct ViewportInfo {
   // Offset from render target UV = 0 to +UV.
@@ -269,24 +287,165 @@ struct ViewportInfo {
   float ndc_scale[3];
   float ndc_offset[3];
 };
+static_assert(sizeof(xenos::DepthRenderTargetFormat) == sizeof(uint32_t),
+              "Change in depthrendertargetformat throws off "
+              "getviewportinfoargs by a bit");
+struct GetViewportInfoArgs {
+  union alignas(64) {
+    struct {
+      // group 1
+      uint32_t x_max;
+      uint32_t y_max;
+      union {
+        struct {
+          uint32_t origin_bottom_left : 1;
+          uint32_t allow_reverse_z : 1;
+          uint32_t convert_z_to_float24 : 1;
+          uint32_t full_float24_in_0_to_1 : 1;
+          uint32_t pixel_shader_writes_depth : 1;
+          xenos::DepthRenderTargetFormat depth_format : 1;
+          // Compared since with a scale threshold the scale can differ per draw
+          // and a cached viewport has to match it. 3 bits fit max 7 scale.
+          uint32_t draw_resolution_scale_x : 3;
+          uint32_t draw_resolution_scale_y : 3;
+        };
+        uint32_t packed_portions;
+      };
+      reg::RB_DEPTHCONTROL normalized_depth_control;
+      // group 2
+      reg::PA_CL_CLIP_CNTL pa_cl_clip_cntl;
+      reg::PA_CL_VTE_CNTL pa_cl_vte_cntl;
+      reg::PA_SU_SC_MODE_CNTL pa_su_sc_mode_cntl;
+      reg::PA_SU_VTX_CNTL pa_su_vtx_cntl;
+      // group 3
+      reg::PA_SC_WINDOW_OFFSET pa_sc_window_offset;
+      float PA_CL_VPORT_XSCALE;
+      float PA_CL_VPORT_YSCALE;
+      float PA_CL_VPORT_ZSCALE;
+
+      float PA_CL_VPORT_XOFFSET;
+      float PA_CL_VPORT_YOFFSET;
+      float PA_CL_VPORT_ZOFFSET;
+      uint32_t padding_set_to_0;
+    };
+#if XE_ARCH_AMD64 == 1
+    struct {
+      __m128i first4;   // x_max, y_max, packed_portions,
+                        // normalized_depth_control
+      __m128i second4;  // pa_cl_clip_cntl, pa_cl_vte_cntl, pa_su_sc_mode_cntl,
+                        // pa_su_vtx_cntl
+      __m128i third4;   // pa_sc_window_offset, PA_CL_VPORT_XSCALE,
+                        // PA_CL_VPORT_YSCALE, PA_CL_VPORT_ZSCALE
+      __m128i last4;    // PA_CL_VPORT_XOFFSET, PA_CL_VPORT_YOFFSET,
+                        // PA_CL_VPORT_ZOFFSET, padding_set_to_0
+    };
+#endif
+  };
+
+  // everything that follows here does not need to be compared.
+  divisors::MagicDiv draw_resolution_scale_x_divisor;
+  divisors::MagicDiv draw_resolution_scale_y_divisor;
+  void Setup(uint32_t _draw_resolution_scale_x,
+             uint32_t _draw_resolution_scale_y,
+             divisors::MagicDiv _draw_resolution_scale_x_divisor,
+             divisors::MagicDiv _draw_resolution_scale_y_divisor,
+             bool _origin_bottom_left, uint32_t _x_max, uint32_t _y_max,
+             bool _allow_reverse_z,
+             reg::RB_DEPTHCONTROL _normalized_depth_control,
+             bool _convert_z_to_float24, bool _full_float24_in_0_to_1,
+             bool _pixel_shader_writes_depth) {
+    packed_portions = 0;
+    padding_set_to_0 = 0;  // important to zero this
+    draw_resolution_scale_x = _draw_resolution_scale_x;
+    draw_resolution_scale_y = _draw_resolution_scale_y;
+    draw_resolution_scale_x_divisor = _draw_resolution_scale_x_divisor;
+    draw_resolution_scale_y_divisor = _draw_resolution_scale_y_divisor;
+    origin_bottom_left = _origin_bottom_left;
+    x_max = _x_max;
+    y_max = _y_max;
+    allow_reverse_z = _allow_reverse_z;
+    normalized_depth_control = _normalized_depth_control;
+    convert_z_to_float24 = _convert_z_to_float24;
+    full_float24_in_0_to_1 = _full_float24_in_0_to_1;
+    pixel_shader_writes_depth = _pixel_shader_writes_depth;
+  }
+
+  void SetupRegisterValues(const RegisterFile& regs) {
+    pa_cl_clip_cntl = regs.Get<reg::PA_CL_CLIP_CNTL>();
+    pa_cl_vte_cntl = regs.Get<reg::PA_CL_VTE_CNTL>();
+    pa_su_sc_mode_cntl = regs.Get<reg::PA_SU_SC_MODE_CNTL>();
+    pa_su_vtx_cntl = regs.Get<reg::PA_SU_VTX_CNTL>();
+    PA_CL_VPORT_XSCALE = regs.Get<float>(XE_GPU_REG_PA_CL_VPORT_XSCALE);
+    PA_CL_VPORT_YSCALE = regs.Get<float>(XE_GPU_REG_PA_CL_VPORT_YSCALE);
+    PA_CL_VPORT_ZSCALE = regs.Get<float>(XE_GPU_REG_PA_CL_VPORT_ZSCALE);
+    PA_CL_VPORT_XOFFSET = regs.Get<float>(XE_GPU_REG_PA_CL_VPORT_XOFFSET);
+    PA_CL_VPORT_YOFFSET = regs.Get<float>(XE_GPU_REG_PA_CL_VPORT_YOFFSET);
+    PA_CL_VPORT_ZOFFSET = regs.Get<float>(XE_GPU_REG_PA_CL_VPORT_ZOFFSET);
+    pa_sc_window_offset = regs.Get<reg::PA_SC_WINDOW_OFFSET>();
+    depth_format = regs.Get<reg::RB_DEPTH_INFO>().depth_format;
+  }
+  XE_FORCEINLINE
+  bool operator==(const GetViewportInfoArgs& prev) const {
+#if XE_ARCH_AMD64 == 0
+    bool result = true;
+
+    auto accum_eq = [&result](auto x, auto y) { result &= (x == y); };
+
+#define EQC(field) accum_eq(field, prev.field)
+    EQC(x_max);
+    EQC(y_max);
+    EQC(packed_portions);
+    EQC(normalized_depth_control.value);
+    EQC(pa_cl_clip_cntl.value);
+    EQC(pa_cl_vte_cntl.value);
+
+    EQC(pa_su_sc_mode_cntl.value);
+    EQC(pa_su_vtx_cntl.value);
+    EQC(PA_CL_VPORT_XSCALE);
+    EQC(PA_CL_VPORT_YSCALE);
+    EQC(PA_CL_VPORT_ZSCALE);
+    EQC(PA_CL_VPORT_XOFFSET);
+    EQC(PA_CL_VPORT_YOFFSET);
+    EQC(PA_CL_VPORT_ZOFFSET);
+    EQC(pa_sc_window_offset.value);
+
+#undef EQC
+    return result;
+#else
+    __m128i mask1 = _mm_cmpeq_epi32(first4, prev.first4);
+    __m128i mask2 = _mm_cmpeq_epi32(second4, prev.second4);
+
+    __m128i mask3 = _mm_cmpeq_epi32(third4, prev.third4);
+    __m128i unified1 = _mm_and_si128(mask1, mask2);
+    __m128i mask4 = _mm_cmpeq_epi32(last4, prev.last4);
+
+    __m128i unified2 = _mm_and_si128(unified1, mask3);
+
+    __m128i unified3 = _mm_and_si128(unified2, mask4);
+
+    return _mm_movemask_epi8(unified3) == 0xFFFF;
+
+#endif
+  }
+};
+
 // Converts the guest viewport (or fakes one if drawing without a viewport) to
 // a viewport, plus values to multiply-add the returned position by, usable on
 // host graphics APIs such as Direct3D 11+ and Vulkan, also forcing it to the
 // Direct3D clip space with 0...W Z rather than -W...W.
-void GetHostViewportInfo(const RegisterFile& regs, uint32_t draw_resolution_scale_x,
-                         uint32_t draw_resolution_scale_y, bool origin_bottom_left, uint32_t x_max,
-                         uint32_t y_max, bool allow_reverse_z,
-                         reg::RB_DEPTHCONTROL normalized_depth_control, bool convert_z_to_float24,
-                         bool full_float24_in_0_to_1, bool pixel_shader_writes_depth,
+void GetHostViewportInfo(GetViewportInfoArgs* XE_RESTRICT args,
                          ViewportInfo& viewport_info_out);
 
-struct Scissor {
+struct alignas(16) Scissor {
   // Offset from render target UV = 0 to +UV.
   uint32_t offset[2];
   // Extent can be zero.
   uint32_t extent[2];
 };
-void GetScissor(const RegisterFile& regs, Scissor& scissor_out, bool clamp_to_surface_pitch = true);
+
+void GetScissor(const RegisterFile& XE_RESTRICT regs,
+                Scissor& XE_RESTRICT scissor_out,
+                bool clamp_to_surface_pitch = true);
 
 // Returns the color component write mask for the draw command taking into
 // account which color targets are written to by the pixel shader, as well as
@@ -305,8 +464,8 @@ uint32_t GetNormalizedColorMask(const RegisterFile& regs,
 // multisampled render targets are stored in the memory (like 1x2 single-sampled
 // pixels with 2x MSAA, or like 2x2 single-sampled pixels with 4x), assuming
 // that the sample 0 is the top sample, and the sample 1 is the bottom one.
-inline uint32_t GetD3D10SampleIndexForGuest2xMSAA(uint32_t guest_sample_index,
-                                                  bool native_2x_msaa_supported) {
+inline uint32_t GetD3D10SampleIndexForGuest2xMSAA(
+    uint32_t guest_sample_index, bool native_2x_msaa_supported) {
   assert(guest_sample_index <= 1);
   if (native_2x_msaa_supported) {
     // On Direct3D 10.1 with native 2x MSAA, the top-left sample is 1, and the
@@ -333,8 +492,11 @@ void AddMemExportRanges(const RegisterFile& regs, const Shader& shader,
 
 // To avoid passing values that the shader won't understand (even though
 // Direct3D 9 shouldn't pass them anyway).
-xenos::CopySampleSelect SanitizeCopySampleSelect(xenos::CopySampleSelect copy_sample_select,
-                                                 xenos::MsaaSamples msaa_samples, bool is_depth);
+XE_NOINLINE
+XE_NOALIAS
+xenos::CopySampleSelect SanitizeCopySampleSelect(
+    xenos::CopySampleSelect copy_sample_select, xenos::MsaaSamples msaa_samples,
+    bool is_depth);
 
 // Packed structures are small and can be passed to the shaders in root/push
 // constants.
@@ -354,6 +516,11 @@ union ResolveEdramInfo {
     // of the resolve region with the contents of the first surely covered
     // column / row with resolution scaling.
     uint32_t fill_half_pixel_offset : 1;
+    // Flag from gamma_decode_pwl_resolve in resolve shader. Some games appear
+    // overexposed unless full 8_8_8_8_GAMMA resolves decode PWL gamma to
+    // linear before MSAA averaging / conversion, then write gamma bytes again
+    // for gamma dests. Off keeps the old byte averaging.
+    uint32_t decode_pwl_gamma : 1;
   };
   ResolveEdramInfo() : packed(0) { static_assert_size(*this, sizeof(packed)); }
 };
@@ -370,18 +537,22 @@ union ResolveCoordinateInfo {
     // In pixels.
     // May be zero if the original rectangle was somehow specified in a
     // totally broken way - in this case, the resolve must be dropped.
-    uint32_t width_div_8 : xenos::kResolveSizeBits - xenos::kResolveAlignmentPixelsLog2;
+    uint32_t width_div_8 : xenos::kResolveSizeBits -
+                           xenos::kResolveAlignmentPixelsLog2;
 
     // 1 to 7.
     uint32_t draw_resolution_scale_x : 3;
     uint32_t draw_resolution_scale_y : 3;
   };
-  ResolveCoordinateInfo() : packed(0) { static_assert_size(*this, sizeof(packed)); }
+  ResolveCoordinateInfo() : packed(0) {
+    static_assert_size(*this, sizeof(packed));
+  }
 };
 
 // Returns tiles actually covered by a resolve area. Row length used is width of
 // the area in tiles, but the pitch between rows is edram_info.pitch_tiles.
-void GetResolveEdramTileSpan(ResolveEdramInfo edram_info, ResolveCoordinateInfo coordinate_info,
+void GetResolveEdramTileSpan(ResolveEdramInfo edram_info,
+                             ResolveCoordinateInfo coordinate_info,
                              uint32_t height_div_8, uint32_t& base_out,
                              uint32_t& row_length_used_out, uint32_t& rows_out);
 
@@ -389,10 +560,10 @@ union ResolveCopyDestCoordinateInfo {
   uint32_t packed;
   struct {
     // 0...16384/32.
-    uint32_t pitch_aligned_div_32 : xenos::kTexture2DCubeMaxWidthHeightLog2 + 2 -
-                                    xenos::kTextureTileWidthHeightLog2;
-    uint32_t height_aligned_div_32 : xenos::kTexture2DCubeMaxWidthHeightLog2 + 2 -
-                                     xenos::kTextureTileWidthHeightLog2;
+    uint32_t pitch_aligned_div_32 : xenos::kTexture2DCubeMaxWidthHeightLog2 +
+                                    2 - xenos::kTextureTileWidthHeightLog2;
+    uint32_t height_aligned_div_32 : xenos::kTexture2DCubeMaxWidthHeightLog2 +
+                                     2 - xenos::kTextureTileWidthHeightLog2;
 
     // Up to the maximum period of the texture tiled address function (128x128
     // for 2D 1bpb).
@@ -401,7 +572,9 @@ union ResolveCopyDestCoordinateInfo {
 
     xenos::CopySampleSelect copy_sample_select : 3;
   };
-  ResolveCopyDestCoordinateInfo() : packed(0) { static_assert_size(*this, sizeof(packed)); }
+  ResolveCopyDestCoordinateInfo() : packed(0) {
+    static_assert_size(*this, sizeof(packed));
+  }
 };
 
 // For backends with Shader Model 5-like compute, host shaders to use to perform
@@ -425,26 +598,13 @@ enum class ResolveCopyShaderIndex {
 struct ResolveCopyShaderInfo {
   // Debug name of the pipeline state object with this shader.
   const char* debug_name;
-  // Whether the EDRAM source needs be bound as a raw buffer (ByteAddressBuffer
-  // in Direct3D) since it can load different numbers of 32-bit values at once
-  // on some hardware. If the host API doesn't support raw buffers, a typed
-  // buffer with source_bpe_log2-byte elements needs to be used instead.
-  bool source_is_raw;
-  // Log2 of bytes per element of the type of the EDRAM buffer bound to the
-  // shader (at least 2).
-  uint32_t source_bpe_log2;
-  // Log2 of bytes per element of the type of the destination buffer bound to
-  // the shader (at least 2 because of the 128 megatexel minimum requirement on
-  // Direct3D 10+ - D3D12_REQ_BUFFER_RESOURCE_TEXEL_COUNT_2_TO_EXP - that
-  // prevents binding the entire shared memory buffer with smaller element
-  // sizes).
-  uint32_t dest_bpe_log2;
   // Log2 of number of pixels in a single thread group along X and Y. 64 threads
   // per group preferred (GCN lane count).
   uint32_t group_size_x_log2, group_size_y_log2;
 };
 
-extern const ResolveCopyShaderInfo resolve_copy_shader_info[size_t(ResolveCopyShaderIndex::kCount)];
+extern const ResolveCopyShaderInfo
+    resolve_copy_shader_info[size_t(ResolveCopyShaderIndex::kCount)];
 
 struct ResolveCopyShaderConstants {
   // When the destination base is not needed (not binding the entire shared
@@ -518,27 +678,30 @@ struct ResolveInfo {
   }
 
   // See GetResolveEdramTileSpan documentation for explanation.
-  void GetCopyEdramTileSpan(uint32_t& base_out, uint32_t& row_length_used_out, uint32_t& rows_out,
-                            uint32_t& pitch_out) const {
-    ResolveEdramInfo edram_info = IsCopyingDepth() ? depth_edram_info : color_edram_info;
+  void GetCopyEdramTileSpan(uint32_t& base_out, uint32_t& row_length_used_out,
+                            uint32_t& rows_out, uint32_t& pitch_out) const {
+    ResolveEdramInfo edram_info =
+        IsCopyingDepth() ? depth_edram_info : color_edram_info;
     GetResolveEdramTileSpan(edram_info, coordinate_info, height_div_8, base_out,
                             row_length_used_out, rows_out);
     pitch_out = edram_info.pitch_tiles;
   }
 
-  ResolveCopyShaderIndex GetCopyShader(uint32_t draw_resolution_scale_x,
-                                       uint32_t draw_resolution_scale_y,
-                                       ResolveCopyShaderConstants& constants_out,
-                                       uint32_t& group_count_x_out,
-                                       uint32_t& group_count_y_out) const;
+  ResolveCopyShaderIndex GetCopyShader(
+      uint32_t draw_resolution_scale_x, uint32_t draw_resolution_scale_y,
+      ResolveCopyShaderConstants& constants_out, uint32_t& group_count_x_out,
+      uint32_t& group_count_y_out) const;
 
-  bool IsClearingDepth() const { return rb_copy_control.depth_clear_enable != 0; }
+  bool IsClearingDepth() const {
+    return rb_copy_control.depth_clear_enable != 0;
+  }
 
   bool IsClearingColor() const {
     return !IsCopyingDepth() && rb_copy_control.color_clear_enable != 0;
   }
 
-  void GetDepthClearShaderConstants(ResolveClearShaderConstants& constants_out) const {
+  void GetDepthClearShaderConstants(
+      ResolveClearShaderConstants& constants_out) const {
     assert_true(IsClearingDepth());
     constants_out.rt_specific.clear_value[0] = rb_depth_clear;
     constants_out.rt_specific.clear_value[1] = rb_depth_clear;
@@ -546,25 +709,38 @@ struct ResolveInfo {
     constants_out.coordinate_info = coordinate_info;
   }
 
-  void GetColorClearShaderConstants(ResolveClearShaderConstants& constants_out) const {
+  void GetColorClearShaderConstants(
+      ResolveClearShaderConstants& constants_out) const {
     assert_true(IsClearingColor());
     // Not doing -32...32 to -1...1 clamping here as a hack for k_16_16 and
     // k_16_16_16_16 blending emulation when using host render targets as it
     // would be inconsistent with the usual way of clearing with a depth quad.
-    // TODO(Triang3l): Check which 32-bit portion is in which register.
-    constants_out.rt_specific.clear_value[0] = rb_color_clear;
-    constants_out.rt_specific.clear_value[1] = rb_color_clear_lo;
+    if (color_edram_info.format_is_64bpp) {
+      // RB_COLOR_CLEAR_LO holds the lower 32 bits.
+      // Red | green << 16 for 16_16_16_16, red for 32_32_FLOAT.
+      // RB_COLOR_CLEAR holds the upper 32 bits.
+      // D3D builds the low dword as R | G << 16 and the high as B | A << 16,
+      // and writes to the _LO and base register respectively.
+      constants_out.rt_specific.clear_value[0] = rb_color_clear_lo;
+      constants_out.rt_specific.clear_value[1] = rb_color_clear;
+    } else {
+      // 32bpp clear values are only taken from RB_COLOR_CLEAR.
+      constants_out.rt_specific.clear_value[0] = rb_color_clear;
+      constants_out.rt_specific.clear_value[1] = rb_color_clear;
+    }
     constants_out.rt_specific.edram_info = color_edram_info;
     constants_out.coordinate_info = coordinate_info;
   }
 
-  std::pair<uint32_t, uint32_t> GetClearShaderGroupCount(uint32_t draw_resolution_scale_x,
-                                                         uint32_t draw_resolution_scale_y) const {
+  std::pair<uint32_t, uint32_t> GetClearShaderGroupCount(
+      uint32_t draw_resolution_scale_x,
+      uint32_t draw_resolution_scale_y) const {
     // 8 guest MSAA samples per invocation.
     uint32_t width_samples_div_8 = coordinate_info.width_div_8;
     uint32_t height_samples_div_8 = height_div_8;
-    xenos::MsaaSamples samples =
-        IsCopyingDepth() ? depth_edram_info.msaa_samples : color_edram_info.msaa_samples;
+    xenos::MsaaSamples samples = IsCopyingDepth()
+                                     ? depth_edram_info.msaa_samples
+                                     : color_edram_info.msaa_samples;
     if (samples >= xenos::MsaaSamples::k2X) {
       height_samples_div_8 <<= 1;
       if (samples >= xenos::MsaaSamples::k4X) {
@@ -573,7 +749,8 @@ struct ResolveInfo {
     }
     width_samples_div_8 *= draw_resolution_scale_x;
     height_samples_div_8 *= draw_resolution_scale_y;
-    return std::make_pair((width_samples_div_8 + uint32_t(7)) >> 3, height_samples_div_8);
+    return std::make_pair((width_samples_div_8 + uint32_t(7)) >> 3,
+                          height_samples_div_8);
   }
 };
 
@@ -582,9 +759,21 @@ struct ResolveInfo {
 // color render target formats are properly emulated as -32...32, true if
 // emulated as snorm, with range limited to -1...1, but with correct blending
 // within that range.
-bool GetResolveInfo(const RegisterFile& regs, const memory::Memory& memory,
+bool GetResolveInfo(const RegisterFile& regs, const Memory& memory,
                     TraceWriter& trace_writer, uint32_t draw_resolution_scale_x,
-                    uint32_t draw_resolution_scale_y, bool fixed_rg16_truncated_to_minus_1_to_1,
-                    bool fixed_rgba16_truncated_to_minus_1_to_1, ResolveInfo& info_out);
+                    uint32_t draw_resolution_scale_y,
+                    bool fixed_rg16_truncated_to_minus_1_to_1,
+                    bool fixed_rgba16_truncated_to_minus_1_to_1,
+                    ResolveInfo& info_out);
 
-}  // namespace rex::graphics::draw_util
+// Returns log2 of the resolve copy destination texel size in bytes for the
+// destination info previously returned by a render target cache Resolve (with
+// the format already normalized to the actual xenos::TextureFormat) - the same
+// derivation the destination extent was calculated with in GetResolveInfo.
+uint32_t GetResolveDownscalePixelSizeLog2(
+    reg::RB_COPY_DEST_INFO copy_dest_info);
+
+}  // namespace draw_util
+}  // namespace rex::graphics
+
+#endif  // XENIA_GPU_DRAW_UTIL_H_

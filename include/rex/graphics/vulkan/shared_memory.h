@@ -1,4 +1,3 @@
-#pragma once
 /**
  ******************************************************************************
  * Xenia : Xbox 360 Emulator Research Project                                 *
@@ -6,9 +5,10 @@
  * Copyright 2020 Ben Vanik. All rights reserved.                             *
  * Released under the BSD license - see LICENSE in the root for more details. *
  ******************************************************************************
- *
- * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
  */
+
+#ifndef XENIA_GPU_VULKAN_VULKAN_SHARED_MEMORY_H_
+#define XENIA_GPU_VULKAN_VULKAN_SHARED_MEMORY_H_
 
 #include <algorithm>
 #include <memory>
@@ -17,8 +17,9 @@
 
 #include <rex/graphics/shared_memory.h>
 #include <rex/graphics/trace_writer.h>
-#include <rex/memory.h>
+#include <rex/system/xmemory.h>
 #include <rex/ui/vulkan/upload_buffer_pool.h>
+#include <rex/graphics/xe_compat.h>
 
 namespace rex::graphics::vulkan {
 
@@ -26,12 +27,14 @@ class VulkanCommandProcessor;
 
 class VulkanSharedMemory : public SharedMemory {
  public:
-  VulkanSharedMemory(VulkanCommandProcessor& command_processor, memory::Memory& memory,
-                     TraceWriter& trace_writer, VkPipelineStageFlags guest_shader_pipeline_stages);
+  VulkanSharedMemory(VulkanCommandProcessor& command_processor, Memory& memory,
+                     TraceWriter& trace_writer,
+                     VkPipelineStageFlags guest_shader_pipeline_stages);
   ~VulkanSharedMemory() override;
 
   bool Initialize();
   void Shutdown(bool from_destructor = false);
+  void ClearCache() override;
 
   void CompletedSubmissionUpdated();
   void EndSubmission();
@@ -58,7 +61,8 @@ class VulkanSharedMemory : public SharedMemory {
   bool AllocateSparseHostGpuMemoryRange(uint32_t offset_allocations,
                                         uint32_t length_allocations) override;
 
-  bool UploadRanges(const std::vector<std::pair<uint32_t, uint32_t>>& upload_page_ranges) override;
+  bool UploadRanges(const std::pair<uint32_t, uint32_t>* upload_page_ranges,
+                    uint32_t num_ranges) override;
 
  private:
   void GetUsageMasks(Usage usage, VkPipelineStageFlags& stage_mask,
@@ -86,3 +90,5 @@ class VulkanSharedMemory : public SharedMemory {
 };
 
 }  // namespace rex::graphics::vulkan
+
+#endif  // XENIA_GPU_VULKAN_VULKAN_SHARED_MEMORY_H_

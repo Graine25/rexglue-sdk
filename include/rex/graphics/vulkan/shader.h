@@ -1,4 +1,3 @@
-#pragma once
 /**
  ******************************************************************************
  * Xenia : Xbox 360 Emulator Research Project                                 *
@@ -6,15 +5,17 @@
  * Copyright 2022 Ben Vanik. All rights reserved.                             *
  * Released under the BSD license - see LICENSE in the root for more details. *
  ******************************************************************************
- *
- * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
  */
+
+#ifndef XENIA_GPU_VULKAN_VULKAN_SHADER_H_
+#define XENIA_GPU_VULKAN_VULKAN_SHADER_H_
 
 #include <cstdint>
 
 #include <rex/graphics/pipeline/shader/spirv.h>
 #include <rex/graphics/xenos.h>
 #include <rex/ui/vulkan/device.h>
+#include <rex/graphics/xe_compat.h>
 
 namespace rex::graphics::vulkan {
 
@@ -42,14 +43,24 @@ class VulkanShader : public SpirvShader {
   // identifiers (used instead of hashes to make sure collisions can't happen)
   // of binding layouts used by the shader, for invalidation if a shader with an
   // incompatible layout has been bound.
-  size_t GetTextureBindingLayoutUserUID() const { return texture_binding_layout_user_uid_; }
-  size_t GetSamplerBindingLayoutUserUID() const { return sampler_binding_layout_user_uid_; }
+  size_t GetTextureBindingLayoutUserUID() const {
+    return texture_binding_layout_user_uid_;
+  }
+  size_t GetSamplerBindingLayoutUserUID() const {
+    return sampler_binding_layout_user_uid_;
+  }
   // Modifications of the same shader can be translated on different threads.
   // The "set" function must only be called if "enter" returned true - these are
   // set up only once.
-  bool EnterBindingLayoutUserUIDSetup() { return !binding_layout_user_uids_set_up_.test_and_set(); }
-  void SetTextureBindingLayoutUserUID(size_t uid) { texture_binding_layout_user_uid_ = uid; }
-  void SetSamplerBindingLayoutUserUID(size_t uid) { sampler_binding_layout_user_uid_ = uid; }
+  bool EnterBindingLayoutUserUIDSetup() {
+    return !binding_layout_user_uids_set_up_.test_and_set();
+  }
+  void SetTextureBindingLayoutUserUID(size_t uid) {
+    texture_binding_layout_user_uid_ = uid;
+  }
+  void SetSamplerBindingLayoutUserUID(size_t uid) {
+    sampler_binding_layout_user_uid_ = uid;
+  }
 
  protected:
   Translation* CreateTranslationInstance(uint64_t modification) override;
@@ -63,3 +74,5 @@ class VulkanShader : public SpirvShader {
 };
 
 }  // namespace rex::graphics::vulkan
+
+#endif  // XENIA_GPU_VULKAN_VULKAN_SHADER_H_

@@ -5,20 +5,20 @@
  * Copyright 2014 Ben Vanik. All rights reserved.                             *
  * Released under the BSD license - see LICENSE in the root for more details. *
  ******************************************************************************
- *
- * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
  */
 
-#pragma once
+#ifndef XENIA_GPU_REGISTER_FILE_H_
+#define XENIA_GPU_REGISTER_FILE_H_
 
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 
 #include <rex/assert.h>
+#include <rex/memory.h>
 #include <rex/graphics/registers.h>
 #include <rex/graphics/xenos.h>
-#include <rex/memory.h>
+#include <rex/graphics/xe_compat.h>
 
 namespace rex::graphics {
 
@@ -36,7 +36,7 @@ class RegisterFile {
   RegisterFile();
 
   static const RegisterInfo* GetRegisterInfo(uint32_t index);
-
+  static bool IsValidRegister(uint32_t index);
   static constexpr size_t kRegisterCount = 0x5003;
   uint32_t values[kRegisterCount];
 
@@ -45,7 +45,7 @@ class RegisterFile {
 
   template <typename T>
   T Get(uint32_t reg) const {
-    return rex::memory::Reinterpret<T>(values[reg]);
+    return xe::memory::Reinterpret<T>(values[reg]);
   }
   template <typename T>
   T Get(Register reg) const {
@@ -59,30 +59,35 @@ class RegisterFile {
   xenos::xe_gpu_vertex_fetch_t GetVertexFetch(uint32_t index) const {
     assert_true(index < 96);
     xenos::xe_gpu_vertex_fetch_t fetch;
-    std::memcpy(
-        &fetch,
-        &values[XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0 + (sizeof(fetch) / sizeof(uint32_t)) * index],
-        sizeof(fetch));
+    std::memcpy(&fetch,
+                &values[XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0 +
+                        (sizeof(fetch) / sizeof(uint32_t)) * index],
+                sizeof(fetch));
     return fetch;
   }
 
   xenos::xe_gpu_texture_fetch_t GetTextureFetch(uint32_t index) const {
     assert_true(index < 32);
     xenos::xe_gpu_texture_fetch_t fetch;
-    std::memcpy(
-        &fetch,
-        &values[XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0 + (sizeof(fetch) / sizeof(uint32_t)) * index],
-        sizeof(fetch));
+    std::memcpy(&fetch,
+                &values[XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0 +
+                        (sizeof(fetch) / sizeof(uint32_t)) * index],
+                sizeof(fetch));
     return fetch;
   }
 
-  xenos::xe_gpu_memexport_stream_t GetMemExportStream(uint32_t float_constant_index) const {
+  xenos::xe_gpu_memexport_stream_t GetMemExportStream(
+      uint32_t float_constant_index) const {
     assert_true(float_constant_index < 512);
     xenos::xe_gpu_memexport_stream_t stream;
-    std::memcpy(&stream, &values[XE_GPU_REG_SHADER_CONSTANT_000_X + 4 * float_constant_index],
-                sizeof(stream));
+    std::memcpy(
+        &stream,
+        &values[XE_GPU_REG_SHADER_CONSTANT_000_X + 4 * float_constant_index],
+        sizeof(stream));
     return stream;
   }
 };
 
 }  // namespace rex::graphics
+
+#endif  // XENIA_GPU_REGISTER_FILE_H_

@@ -5,32 +5,28 @@
  * Copyright 2020 Ben Vanik. All rights reserved.                             *
  * Released under the BSD license - see LICENSE in the root for more details. *
  ******************************************************************************
- *
- * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
  */
-
-#include <cstring>
-#include <memory>
 
 #include <rex/graphics/trace_writer.h>
 
-// TODO(tomc): Enable on other platforms once the RTTI linking issue is resolved
-#ifdef _WIN32
-#define REX_TRACE_USE_SNAPPY 1
-#include "snappy-sinksource.h"
-#include "snappy.h"
-#endif
+#include <cstring>
 
+#include <snappy-sinksource.h>
+#include <snappy.h>
+
+#include <rex/graphics/version.h>
 #include <rex/assert.h>
 #include <rex/filesystem.h>
-#include <rex/graphics/registers.h>
-#include <rex/graphics/xenos.h>
 #include <rex/logging.h>
 #include <rex/string.h>
+#include <rex/graphics/registers.h>
+#include <rex/graphics/xenos.h>
+#include <rex/graphics/xe_compat.h>
 
 namespace rex::graphics {
-
-TraceWriter::TraceWriter(uint8_t* membase) : membase_(membase), file_(nullptr) {}
+#if XE_ENABLE_TRACE_WRITER_INSTRUMENTATION == 1
+TraceWriter::TraceWriter(uint8_t* membase)
+    : membase_(membase), file_(nullptr) {}
 
 TraceWriter::~TraceWriter() = default;
 
@@ -43,21 +39,16 @@ bool TraceWriter::Open(const std::filesystem::path& path, uint32_t title_id) {
     std::filesystem::create_directories(base_path);
   }
 
-  file_ = rex::filesystem::OpenFile(canonical_path, "wb");
+  file_ = xe::filesystem::OpenFile(canonical_path, "wb");
   if (!file_) {
-    REXGPU_ERROR("TraceWriter: Failed to open trace file: {}", canonical_path.string());
     return false;
   }
-
-  REXGPU_INFO("TraceWriter: Opened trace file: {}", canonical_path.string());
 
   // Write header first. Must be at the top of the file.
   TraceHeader header;
   header.version = kTraceFormatVersion;
-  // Use a static commit string for rexglue
-  std::memset(header.build_commit_sha, 0, sizeof(header.build_commit_sha));
-  rex::string::copy_truncating(header.build_commit_sha, "rexglue-dev",
-                               sizeof(header.build_commit_sha));
+  std::memcpy(header.build_commit_sha, XE_BUILD_COMMIT,
+              sizeof(header.build_commit_sha));
   header.title_id = title_id;
   fwrite(&header, sizeof(header), 1, file_);
 
@@ -78,7 +69,6 @@ void TraceWriter::Close() {
     fflush(file_);
     fclose(file_);
     file_ = nullptr;
-    REXGPU_INFO("TraceWriter: Closed trace file");
   }
 }
 
@@ -149,7 +139,8 @@ void TraceWriter::WritePacketEnd() {
   fwrite(&cmd, 1, sizeof(cmd), file_);
 }
 
-void TraceWriter::WriteMemoryRead(uint32_t base_ptr, size_t length, const void* host_ptr) {
+void TraceWriter::WriteMemoryRead(uint32_t base_ptr, size_t length,
+                                  const void* host_ptr) {
   if (!file_) {
     return;
   }
@@ -181,27 +172,29 @@ void TraceWriter::WriteMemoryReadCachedNop(uint32_t base_ptr, size_t length) {
   }
 }
 
-void TraceWriter::WriteMemoryWrite(uint32_t base_ptr, size_t length, const void* host_ptr) {
+void TraceWriter::WriteMemoryWrite(uint32_t base_ptr, size_t length,
+                                   const void* host_ptr) {
   if (!file_) {
     return;
   }
-  WriteMemoryCommand(TraceCommandType::kMemoryWrite, base_ptr, length, host_ptr);
+  WriteMemoryCommand(TraceCommandType::kMemoryWrite, base_ptr, length,
+                     host_ptr);
 }
 
-#if REX_TRACE_USE_SNAPPY
 class SnappySink : public snappy::Sink {
  public:
   SnappySink(FILE* file) : file_(file) {}
 
-  void Append(const char* bytes, size_t n) override { fwrite(bytes, 1, n, file_); }
+  void Append(const char* bytes, size_t n) override {
+    fwrite(bytes, 1, n, file_);
+  }
 
  private:
   FILE* file_ = nullptr;
 };
-#endif
 
-void TraceWriter::WriteMemoryCommand(TraceCommandType type, uint32_t base_ptr, size_t length,
-                                     const void* host_ptr) {
+void TraceWriter::WriteMemoryCommand(TraceCommandType type, uint32_t base_ptr,
+                                     size_t length, const void* host_ptr) {
   MemoryCommand cmd = {};
   cmd.type = type;
   cmd.base_ptr = base_ptr;
@@ -212,7 +205,6 @@ void TraceWriter::WriteMemoryCommand(TraceCommandType type, uint32_t base_ptr, s
     host_ptr = membase_ + cmd.base_ptr;
   }
 
-#if REX_TRACE_USE_SNAPPY
   bool compress = compress_output_ && length > compression_threshold_;
   if (compress) {
     // Write the header now so we reserve space in the buffer.
@@ -221,18 +213,18 @@ void TraceWriter::WriteMemoryCommand(TraceCommandType type, uint32_t base_ptr, s
     fwrite(&cmd, 1, sizeof(cmd), file_);
 
     // Stream the content right to the buffer.
-    snappy::ByteArraySource snappy_source(reinterpret_cast<const char*>(host_ptr),
-                                          cmd.decoded_length);
+    snappy::ByteArraySource snappy_source(
+        reinterpret_cast<const char*>(host_ptr), cmd.decoded_length);
     SnappySink snappy_sink(file_);
-    cmd.encoded_length = static_cast<uint32_t>(snappy::Compress(&snappy_source, &snappy_sink));
+    cmd.encoded_length =
+        static_cast<uint32_t>(snappy::Compress(&snappy_source, &snappy_sink));
 
     // Seek back and overwrite the header with our final size.
     std::fseek(file_, header_position, SEEK_SET);
     fwrite(&cmd, 1, sizeof(cmd), file_);
-    std::fseek(file_, header_position + sizeof(cmd) + cmd.encoded_length, SEEK_SET);
-  } else
-#endif
-  {
+    std::fseek(file_, header_position + sizeof(cmd) + cmd.encoded_length,
+               SEEK_SET);
+  } else {
     // Uncompressed - write buffer directly to the file.
     cmd.encoding_format = MemoryEncodingFormat::kNone;
     fwrite(&cmd, 1, sizeof(cmd), file_);
@@ -244,7 +236,6 @@ void TraceWriter::WriteEdramSnapshot(const void* snapshot) {
   EdramSnapshotCommand cmd = {};
   cmd.type = TraceCommandType::kEdramSnapshot;
 
-#if REX_TRACE_USE_SNAPPY
   if (compress_output_) {
     // Write the header now so we reserve space in the buffer.
     long header_position = std::ftell(file_);
@@ -252,18 +243,18 @@ void TraceWriter::WriteEdramSnapshot(const void* snapshot) {
     fwrite(&cmd, 1, sizeof(cmd), file_);
 
     // Stream the content right to the buffer.
-    snappy::ByteArraySource snappy_source(reinterpret_cast<const char*>(snapshot),
-                                          xenos::kEdramSizeBytes);
+    snappy::ByteArraySource snappy_source(
+        reinterpret_cast<const char*>(snapshot), xenos::kEdramSizeBytes);
     SnappySink snappy_sink(file_);
-    cmd.encoded_length = static_cast<uint32_t>(snappy::Compress(&snappy_source, &snappy_sink));
+    cmd.encoded_length =
+        static_cast<uint32_t>(snappy::Compress(&snappy_source, &snappy_sink));
 
     // Seek back and overwrite the header with our final size.
     std::fseek(file_, header_position, SEEK_SET);
     fwrite(&cmd, 1, sizeof(cmd), file_);
-    std::fseek(file_, header_position + sizeof(cmd) + cmd.encoded_length, SEEK_SET);
-  } else
-#endif
-  {
+    std::fseek(file_, header_position + sizeof(cmd) + cmd.encoded_length,
+               SEEK_SET);
+  } else {
     // Uncompressed - write buffer directly to the file.
     cmd.encoding_format = MemoryEncodingFormat::kNone;
     cmd.encoded_length = xenos::kEdramSizeBytes;
@@ -283,8 +274,10 @@ void TraceWriter::WriteEvent(EventCommand::Type event_type) {
   fwrite(&cmd, 1, sizeof(cmd), file_);
 }
 
-void TraceWriter::WriteRegisters(uint32_t first_register, const uint32_t* register_values,
-                                 uint32_t register_count, bool execute_callbacks_on_play) {
+void TraceWriter::WriteRegisters(uint32_t first_register,
+                                 const uint32_t* register_values,
+                                 uint32_t register_count,
+                                 bool execute_callbacks_on_play) {
   RegistersCommand cmd = {};
   cmd.type = TraceCommandType::kRegisters;
   cmd.first_register = first_register;
@@ -292,7 +285,6 @@ void TraceWriter::WriteRegisters(uint32_t first_register, const uint32_t* regist
   cmd.execute_callbacks = execute_callbacks_on_play;
 
   uint32_t uncompressed_length = uint32_t(sizeof(uint32_t) * register_count);
-#if REX_TRACE_USE_SNAPPY
   if (compress_output_) {
     // Write the header now so we reserve space in the buffer.
     long header_position = std::ftell(file_);
@@ -300,18 +292,18 @@ void TraceWriter::WriteRegisters(uint32_t first_register, const uint32_t* regist
     fwrite(&cmd, 1, sizeof(cmd), file_);
 
     // Stream the content right to the buffer.
-    snappy::ByteArraySource snappy_source(reinterpret_cast<const char*>(register_values),
-                                          uncompressed_length);
+    snappy::ByteArraySource snappy_source(
+        reinterpret_cast<const char*>(register_values), uncompressed_length);
     SnappySink snappy_sink(file_);
-    cmd.encoded_length = static_cast<uint32_t>(snappy::Compress(&snappy_source, &snappy_sink));
+    cmd.encoded_length =
+        static_cast<uint32_t>(snappy::Compress(&snappy_source, &snappy_sink));
 
     // Seek back and overwrite the header with our final size.
     std::fseek(file_, header_position, SEEK_SET);
     fwrite(&cmd, 1, sizeof(cmd), file_);
-    std::fseek(file_, header_position + sizeof(cmd) + cmd.encoded_length, SEEK_SET);
-  } else
-#endif
-  {
+    std::fseek(file_, header_position + sizeof(cmd) + cmd.encoded_length,
+               SEEK_SET);
+  } else {
     // Uncompressed - write the values directly to the file.
     cmd.encoding_format = MemoryEncodingFormat::kNone;
     cmd.encoded_length = uncompressed_length;
@@ -320,18 +312,20 @@ void TraceWriter::WriteRegisters(uint32_t first_register, const uint32_t* regist
   }
 }
 
-void TraceWriter::WriteGammaRamp(const reg::DC_LUT_30_COLOR* gamma_ramp_256_entry_table,
-                                 const reg::DC_LUT_PWL_DATA* gamma_ramp_pwl_rgb,
-                                 uint32_t gamma_ramp_rw_component) {
+void TraceWriter::WriteGammaRamp(
+    const reg::DC_LUT_30_COLOR* gamma_ramp_256_entry_table,
+    const reg::DC_LUT_PWL_DATA* gamma_ramp_pwl_rgb,
+    uint32_t gamma_ramp_rw_component) {
   GammaRampCommand cmd = {};
   cmd.type = TraceCommandType::kGammaRamp;
   cmd.rw_component = uint8_t(gamma_ramp_rw_component);
 
-  constexpr uint32_t k256EntryTableUncompressedLength = sizeof(reg::DC_LUT_30_COLOR) * 256;
-  constexpr uint32_t kPWLUncompressedLength = sizeof(reg::DC_LUT_PWL_DATA) * 3 * 128;
+  constexpr uint32_t k256EntryTableUncompressedLength =
+      sizeof(reg::DC_LUT_30_COLOR) * 256;
+  constexpr uint32_t kPWLUncompressedLength =
+      sizeof(reg::DC_LUT_PWL_DATA) * 3 * 128;
   constexpr uint32_t kUncompressedLength =
       k256EntryTableUncompressedLength + kPWLUncompressedLength;
-#if REX_TRACE_USE_SNAPPY
   if (compress_output_) {
     // Write the header now so we reserve space in the buffer.
     long header_position = std::ftell(file_);
@@ -341,28 +335,31 @@ void TraceWriter::WriteGammaRamp(const reg::DC_LUT_30_COLOR* gamma_ramp_256_entr
     // Stream the content right to the buffer.
     {
       std::unique_ptr<char[]> gamma_ramps(new char[kUncompressedLength]);
-      std::memcpy(gamma_ramps.get(), gamma_ramp_256_entry_table, k256EntryTableUncompressedLength);
-      std::memcpy(gamma_ramps.get() + k256EntryTableUncompressedLength, gamma_ramp_pwl_rgb,
-                  kPWLUncompressedLength);
-      snappy::ByteArraySource snappy_source(gamma_ramps.get(), kUncompressedLength);
+      std::memcpy(gamma_ramps.get(), gamma_ramp_256_entry_table,
+                  k256EntryTableUncompressedLength);
+      std::memcpy(gamma_ramps.get() + k256EntryTableUncompressedLength,
+                  gamma_ramp_pwl_rgb, kPWLUncompressedLength);
+      snappy::ByteArraySource snappy_source(gamma_ramps.get(),
+                                            kUncompressedLength);
       SnappySink snappy_sink(file_);
-      cmd.encoded_length = static_cast<uint32_t>(snappy::Compress(&snappy_source, &snappy_sink));
+      cmd.encoded_length =
+          static_cast<uint32_t>(snappy::Compress(&snappy_source, &snappy_sink));
     }
 
     // Seek back and overwrite the header with our final size.
     std::fseek(file_, header_position, SEEK_SET);
     fwrite(&cmd, 1, sizeof(cmd), file_);
-    std::fseek(file_, header_position + sizeof(cmd) + cmd.encoded_length, SEEK_SET);
-  } else
-#endif
-  {
+    std::fseek(file_, header_position + sizeof(cmd) + cmd.encoded_length,
+               SEEK_SET);
+  } else {
     // Uncompressed - write the values directly to the file.
     cmd.encoding_format = MemoryEncodingFormat::kNone;
     cmd.encoded_length = kUncompressedLength;
     fwrite(&cmd, 1, sizeof(cmd), file_);
-    fwrite(gamma_ramp_256_entry_table, 1, k256EntryTableUncompressedLength, file_);
+    fwrite(gamma_ramp_256_entry_table, 1, k256EntryTableUncompressedLength,
+           file_);
     fwrite(gamma_ramp_pwl_rgb, 1, kPWLUncompressedLength, file_);
   }
 }
-
+#endif
 }  // namespace rex::graphics

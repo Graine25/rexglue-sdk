@@ -1,8 +1,12 @@
-# rexgpu-xenos: Xenos GPU emulation plugin (ported from Xenia)
+# rexgpu-xenos: Xenos GPU emulation plugin (poured 1:1 from Xenia Canary)
 # Namespace: rex::graphics
 #
 # Runtime-loaded via rex::system::LoadGpuPlugin; consumers never link this
-# target. The Xenos format layer is compiled into rexcore.
+# target. The Xenos format layer (xenos.cpp) is compiled into rexcore.
+#
+# Layout: Canary's src/xenia/gpu poured into ReXGlue's convention -- headers in
+# include/rex/graphics/, sources here as .cpp, backends de-prefixed, and the
+# shader/texture/render_target/util/format subsystems under their subdirs.
 
 set(REXGPU_XENOS_SOURCES
     plugin_main.cpp
@@ -25,13 +29,18 @@ set(REXGPU_XENOS_SOURCES
     primitive_processor.cpp
     pipeline/render_target/cache.cpp
     shared_memory.cpp
+
+    # Texture cache (stateful). The stateless format layer (texture_info/
+    # info_formats/util/extent) is compiled into rexcore, not the plugin.
     pipeline/texture/cache.cpp
+
+    # Shader translation core
     pipeline/shader/interpreter.cpp
     pipeline/shader/translator.cpp
     pipeline/shader/translator_disasm.cpp
 )
 
-# SPIR-V shader translation
+# SPIR-V shader translation (requires glslang 16 -- bumped; compiles).
 set(REXGPU_XENOS_SPIRV_SOURCES
     pipeline/shader/spirv_builder.cpp
     pipeline/shader/spirv.cpp
@@ -53,16 +62,14 @@ set(REXGPU_XENOS_VULKAN_SOURCES
     vulkan/shader.cpp
     vulkan/shared_memory.cpp
     vulkan/texture_cache.cpp
+    vulkan/zpd_query_pool.cpp
 )
 
-# D3D12 backend
+# D3D12 backend (Windows only)
 if(REXGLUE_USE_D3D12)
-    # DXBC third-party dependency
     set(REXGPU_XENOS_DXBC_THIRDPARTY_SOURCES
         ${REXGLUE_ROOT}/thirdparty/dxbc/DXBCChecksum.cpp
     )
-
-    # DXBC shader translation (required for D3D12)
     set(REXGPU_XENOS_DXBC_SOURCES
         pipeline/shader/dxbc.cpp
         pipeline/shader/dxbc_translator.cpp
@@ -71,8 +78,6 @@ if(REXGLUE_USE_D3D12)
         pipeline/shader/dxbc_translator_memexport.cpp
         pipeline/shader/dxbc_translator_om.cpp
     )
-
-    # D3D12 GPU backend
     set(REXGPU_XENOS_D3D12_SOURCES
         d3d12/graphics_system.cpp
         d3d12/command_processor.cpp
@@ -83,6 +88,7 @@ if(REXGLUE_USE_D3D12)
         d3d12/texture_cache.cpp
         d3d12/deferred_command_list.cpp
         d3d12/pipeline_cache.cpp
+        d3d12/zpd_query_pool.cpp
     )
 endif()
 
@@ -97,6 +103,13 @@ if(REXGLUE_USE_D3D12)
         ${REXGPU_XENOS_D3D12_SOURCES})
 endif()
 
+# trace_writer's SnappySink derives from snappy::Sink, which snappy builds
+# -fno-rtti (vtable present, no typeinfo). Build trace_writer without RTTI so its
+# vtable ABI matches snappy's (no dangling base-typeinfo reference at link).
+# trace_writer uses no dynamic_cast/typeid; the rest of the plugin keeps RTTI
+# (spirv/dxbc translators dynamic_cast the shader type).
+set_source_files_properties(trace_writer.cpp PROPERTIES COMPILE_OPTIONS -fno-rtti)
+
 add_library(rexgpu-xenos SHARED ${REXGPU_XENOS_SOURCES})
 add_library(rex::gpu-xenos ALIAS rexgpu-xenos)
 
@@ -106,7 +119,11 @@ set_target_properties(rexgpu-xenos PROPERTIES
     VISIBILITY_INLINES_HIDDEN ON
 )
 
+# Poured Canary headers live next to the sources' logical tree under include/;
+# the source dir is added so backend TUs can reach sibling internal headers and
+# the generated shader bytecode under shaders/.
 target_include_directories(rexgpu-xenos PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
     ${REXGLUE_ROOT}/thirdparty/renderdoc
     ${REXGLUE_ROOT}  # For thirdparty/dxbc/DXBCChecksum.h include
 )
@@ -131,7 +148,7 @@ if(REXGLUE_USE_VULKAN)
         MachineIndependent
         GenericCodeGen
         OSDependent
-        OGLCompiler
+        # OGLCompiler removed in glslang 16
     )
     if(APPLE)
         # macOS normalizes translated SPIR-V through the SPIRV-Tools optimizer

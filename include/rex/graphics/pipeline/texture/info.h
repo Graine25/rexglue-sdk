@@ -5,22 +5,90 @@
  * Copyright 2014 Ben Vanik. All rights reserved.                             *
  * Released under the BSD license - see LICENSE in the root for more details. *
  ******************************************************************************
- *
- * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
  */
 
-#pragma once
+#ifndef XENIA_GPU_TEXTURE_INFO_H_
+#define XENIA_GPU_TEXTURE_INFO_H_
 
+#include <array>
 #include <cstring>
 #include <memory>
-
-#include <rex/assert.h>
 #include <rex/graphics/xenos.h>
+#include <rex/graphics/xe_compat.h>
 
 namespace rex::graphics {
+#if XE_ARCH_AMD64 == 1
+struct GetBaseFormatHelper {
+  uint64_t indexer_;
+  // chrispy: todo, can encode deltas or a SHIFT+ADD for remapping the input
+  // format to the base, the shuffle lookup isnt great
+  std::array<int8_t, 16> remap_;
+};
+constexpr GetBaseFormatHelper PrecomputeGetBaseFormatTable() {
+#define R(x, y) xenos::TextureFormat::x, xenos::TextureFormat::y
+  constexpr xenos::TextureFormat entries[] = {
+      R(k_16_EXPAND, k_16_FLOAT),
+      R(k_16_16_EXPAND, k_16_16_FLOAT),
+      R(k_16_16_16_16_EXPAND, k_16_16_16_16_FLOAT),
+      R(k_8_8_8_8_AS_16_16_16_16, k_8_8_8_8),
+      R(k_DXT1_AS_16_16_16_16, k_DXT1),
+      R(k_DXT2_3_AS_16_16_16_16, k_DXT2_3),
+      R(k_DXT4_5_AS_16_16_16_16, k_DXT4_5),
+      R(k_2_10_10_10_AS_16_16_16_16, k_2_10_10_10),
+      R(k_10_11_11_AS_16_16_16_16, k_10_11_11),
+      R(k_11_11_10_AS_16_16_16_16, k_11_11_10),
+      R(k_8_8_8_8_GAMMA_EDRAM, k_8_8_8_8)};
 
+#undef R
+
+  uint64_t need_remap_table = 0ULL;
+  constexpr unsigned num_entries = sizeof(entries) / sizeof(entries[0]);
+
+  for (unsigned i = 0; i < num_entries / 2; ++i) {
+    need_remap_table |= 1ULL << static_cast<uint32_t>(entries[i * 2]);
+  }
+  std::array<int8_t, 16> remap{0};
+
+  for (unsigned i = 0; i < num_entries / 2; ++i) {
+    remap[i] = static_cast<int8_t>(static_cast<uint32_t>(entries[(i * 2) + 1]));
+  }
+
+  return GetBaseFormatHelper{need_remap_table, remap};
+}
+inline xenos::TextureFormat GetBaseFormat(xenos::TextureFormat texture_format) {
+  constexpr GetBaseFormatHelper helper = PrecomputeGetBaseFormatTable();
+
+  constexpr uint64_t indexer_table = helper.indexer_;
+  constexpr std::array<int8_t, 16> table = helper.remap_;
+
+  uint64_t format_mask = 1ULL << static_cast<uint32_t>(texture_format);
+  if ((indexer_table & format_mask)) {
+    uint64_t trailing_mask = format_mask - 1ULL;
+    uint64_t trailing_bits = indexer_table & trailing_mask;
+
+    uint32_t sparse_index = xe::bit_count(trailing_bits);
+
+    __m128i index_in_low =
+        _mm_cvtsi32_si128(static_cast<int>(sparse_index) | 0x80808000);
+
+    __m128i new_format_low = _mm_shuffle_epi8(
+        _mm_setr_epi8(table[0], table[1], table[2], table[3], table[4],
+                      table[5], table[6], table[7], table[8], table[9],
+                      table[10], table[11], table[12], 0, 0, 0),
+        index_in_low);
+
+    uint32_t prelaundered =
+        static_cast<uint32_t>(_mm_cvtsi128_si32(new_format_low));
+    return *reinterpret_cast<xenos::TextureFormat*>(&prelaundered);
+
+  } else {
+    return texture_format;
+  }
+}
+#else
 inline xenos::TextureFormat GetBaseFormat(xenos::TextureFormat texture_format) {
   // These formats are used for resampling textures / gamma control.
+  // 11 entries
   switch (texture_format) {
     case xenos::TextureFormat::k_16_EXPAND:
       return xenos::TextureFormat::k_16_FLOAT;
@@ -50,7 +118,7 @@ inline xenos::TextureFormat GetBaseFormat(xenos::TextureFormat texture_format) {
 
   return texture_format;
 }
-
+#endif
 inline size_t GetTexelSize(xenos::TextureFormat format) {
   switch (format) {
     case xenos::TextureFormat::k_1_5_5_5:
@@ -94,7 +162,8 @@ inline size_t GetTexelSize(xenos::TextureFormat format) {
   }
 }
 
-inline xenos::TextureFormat ColorFormatToTextureFormat(xenos::ColorFormat color_format) {
+inline xenos::TextureFormat ColorFormatToTextureFormat(
+    xenos::ColorFormat color_format) {
   return static_cast<xenos::TextureFormat>(color_format);
 }
 
@@ -111,7 +180,7 @@ inline xenos::TextureFormat DepthRenderTargetToTextureFormat(
   }
 }
 
-enum class FormatType {
+enum class FormatType : uint32_t {
   // Uncompressed, and is also a ColorFormat.
   kResolvable,
   // Uncompressed, but resolve or memory export cannot be done to the format.
@@ -120,17 +189,35 @@ enum class FormatType {
 };
 
 struct FormatInfo {
-  xenos::TextureFormat format;
-  const char* name;
-  FormatType type;
-  uint32_t block_width;
-  uint32_t block_height;
-  uint32_t bits_per_pixel;
+  const xenos::TextureFormat format;
 
-  uint32_t bytes_per_block() const { return block_width * block_height * bits_per_pixel / 8; }
+  const FormatType type;
+  const uint32_t block_width;
+  const uint32_t block_height;
+  const uint32_t bits_per_pixel;
+  const uint8_t component_bits[4];
+  const bool fixed;
+
+  uint32_t bytes_per_block() const {
+    return block_width * block_height * bits_per_pixel / 8;
+  }
 
   static const FormatInfo* Get(uint32_t gpu_format);
 
+  static const char* GetName(uint32_t gpu_format);
+  static const char* GetName(xenos::TextureFormat format) {
+    return GetName(static_cast<uint32_t>(format));
+  }
+
+  static unsigned char GetWidthShift(uint32_t gpu_format);
+  static unsigned char GetHeightShift(uint32_t gpu_format);
+
+  static unsigned char GetWidthShift(xenos::TextureFormat gpu_format) {
+    return GetWidthShift(static_cast<uint32_t>(gpu_format));
+  }
+  static unsigned char GetHeightShift(xenos::TextureFormat gpu_format) {
+    return GetHeightShift(static_cast<uint32_t>(gpu_format));
+  }
   static const FormatInfo* Get(xenos::TextureFormat format) {
     return Get(static_cast<uint32_t>(format));
   }
@@ -148,11 +235,15 @@ struct TextureExtent {
   uint32_t depth;
 
   uint32_t all_blocks() const { return block_pitch_h * block_pitch_v * depth; }
-  uint32_t visible_blocks() const { return block_pitch_h * block_height * depth; }
+  uint32_t visible_blocks() const {
+    return block_pitch_h * block_height * depth;
+  }
 
-  static TextureExtent Calculate(const FormatInfo* format_info, uint32_t pitch, uint32_t height,
-                                 uint32_t depth, bool is_tiled, bool is_guest);
-  static TextureExtent Calculate(const TextureInfo* texture_info, bool is_guest);
+  static TextureExtent Calculate(const FormatInfo* format_info, uint32_t pitch,
+                                 uint32_t height, uint32_t depth, bool is_tiled,
+                                 bool is_guest);
+  static TextureExtent Calculate(const TextureInfo* texture_info,
+                                 bool is_guest);
 };
 
 struct TextureMemoryInfo {
@@ -180,32 +271,32 @@ struct TextureInfo {
   TextureMemoryInfo memory;
   TextureExtent extent;
 
-  const FormatInfo* format_info() const { return FormatInfo::Get(static_cast<uint32_t>(format)); }
-
-  bool is_compressed() const { return format_info()->type == FormatType::kCompressed; }
+  const FormatInfo* format_info() const {
+    return FormatInfo::Get(static_cast<uint32_t>(format));
+  }
+  const char* format_name() const {
+    return FormatInfo::GetName(static_cast<uint32_t>(format));
+  }
+  bool is_compressed() const {
+    return format_info()->type == FormatType::kCompressed;
+  }
 
   uint32_t mip_levels() const { return 1 + (mip_max_level - mip_min_level); }
 
-  static bool Prepare(const xenos::xe_gpu_texture_fetch_t& fetch, TextureInfo* out_info);
+  static bool Prepare(const xenos::xe_gpu_texture_fetch_t& fetch,
+                      TextureInfo* out_info);
 
-  static bool PrepareResolve(uint32_t physical_address, xenos::TextureFormat texture_format,
-                             xenos::Endian endian, uint32_t pitch, uint32_t width, uint32_t height,
-                             uint32_t depth, TextureInfo* out_info);
+  static bool PrepareResolve(uint32_t physical_address,
+                             xenos::TextureFormat texture_format,
+                             xenos::Endian endian, uint32_t pitch,
+                             uint32_t width, uint32_t height, uint32_t depth,
+                             TextureInfo* out_info);
 
   uint32_t GetMaxMipLevels() const;
 
   const TextureExtent GetMipExtent(uint32_t mip, bool is_guest) const;
 
   void GetMipSize(uint32_t mip, uint32_t* width, uint32_t* height) const;
-
-  // Get the memory location of a mip. offset_x and offset_y are in blocks.
-  uint32_t GetMipLocation(uint32_t mip, uint32_t* offset_x, uint32_t* offset_y,
-                          bool is_guest) const;
-
-  static bool GetPackedTileOffset(uint32_t width, uint32_t height, const FormatInfo* format_info,
-                                  int packed_tile, uint32_t* offset_x, uint32_t* offset_y);
-
-  bool GetPackedTileOffset(int packed_tile, uint32_t* offset_x, uint32_t* offset_y) const;
 
   uint64_t hash() const;
   bool operator==(const TextureInfo& other) const {
@@ -217,3 +308,5 @@ struct TextureInfo {
 };
 
 }  // namespace rex::graphics
+
+#endif  // XENIA_GPU_TEXTURE_INFO_H_

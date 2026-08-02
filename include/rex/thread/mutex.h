@@ -66,18 +66,21 @@ class global_critical_region {
   }
 
   // Acquires a lock on the global critical section.
-  inline std::unique_lock<std::recursive_mutex> Acquire() {
+  // const: locking the shared static mutex does not mutate the region object,
+  // so instances can be held as `static constexpr` members (as the Xenos GPU
+  // caches do) and still acquire.
+  inline std::unique_lock<std::recursive_mutex> Acquire() const {
     return std::unique_lock<std::recursive_mutex>(mutex());
   }
 
   // Acquires a deferred lock on the global critical section.
-  inline std::unique_lock<std::recursive_mutex> AcquireDeferred() {
+  inline std::unique_lock<std::recursive_mutex> AcquireDeferred() const {
     return std::unique_lock<std::recursive_mutex>(mutex(), std::defer_lock);
   }
 
   // Tries to acquire a lock on the glboal critical section.
   // Check owns_lock() to see if the lock was successfully acquired.
-  inline std::unique_lock<std::recursive_mutex> TryAcquire() {
+  inline std::unique_lock<std::recursive_mutex> TryAcquire() const {
     return std::unique_lock<std::recursive_mutex>(mutex(), std::try_to_lock);
   }
 };

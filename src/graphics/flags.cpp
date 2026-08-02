@@ -5,49 +5,124 @@
  * Copyright 2020 Ben Vanik. All rights reserved.                             *
  * Released under the BSD license - see LICENSE in the root for more details. *
  ******************************************************************************
- *
- * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
  */
 
 #include <rex/graphics/flags.h>
-#include <rex/logging.h>
-#include <rex/ui/renderdoc_api.h>
+#include <rex/graphics/xe_compat.h>
 
-REXCVAR_DEFINE_BOOL(gpu_allow_invalid_fetch_constants, false, "GPU",
-                    "Allow invalid fetch constants");
-REXCVAR_DEFINE_BOOL(native_2x_msaa, true, "GPU", "Enable native 2x MSAA");
-REXCVAR_DEFINE_BOOL(depth_float24_round, false, "GPU", "Round float24 depth values");
-REXCVAR_DEFINE_BOOL(depth_float24_convert_in_pixel_shader, false, "GPU",
-                    "Convert float24 depth in pixel shader");
-REXCVAR_DEFINE_BOOL(depth_transfer_not_equal_test, true, "GPU",
-                    "Use not-equal test for depth transfer");
-REXCVAR_DEFINE_BOOL(gamma_render_target_as_unorm16, true, "GPU",
-                    "Use R16G16B16A16_UNORM for gamma render targets (more accurate than sRGB)")
-    .lifecycle(rex::cvar::Lifecycle::kHotReload);
-REXCVAR_DEFINE_STRING(dump_shaders, "", "GPU", "Path to dump shaders to");
-REXCVAR_DEFINE_BOOL(use_fuzzy_alpha_epsilon, false, "GPU",
-                    "Use approximate compare for alpha test values to prevent "
-                    "flickering on NVIDIA graphics cards");
-REXCVAR_DEFINE_BOOL(gpu_debug_markers, false, "GPU",
-                    "Insert debug markers into GPU command streams for tools "
-                    "like PIX and RenderDoc. Automatically enabled when "
-                    "RenderDoc is detected.");
+DEFINE_path(trace_gpu_prefix, "scratch/gpu/",
+            "Prefix path for GPU trace files.", "GPU");
+DEFINE_bool(trace_gpu_stream, false, "Trace all GPU packets.", "GPU");
 
-bool IsGpuDebugMarkersEnabled() {
-  static bool cached = false;
-  static bool result = false;
-  if (!cached) {
-    cached = true;
-    if (REXCVAR_GET(gpu_debug_markers)) {
-      result = true;
-      REXLOG_INFO("GPU debug markers enabled via CVar");
-    } else {
-      auto renderdoc_api = rex::ui::RenderDocAPI::CreateIfConnected();
-      if (renderdoc_api) {
-        result = true;
-        REXLOG_INFO("GPU debug markers auto-enabled (RenderDoc detected)");
-      }
-    }
-  }
-  return result;
-}
+DEFINE_path(
+    dump_shaders, "",
+    "For shader debugging, path to dump GPU shaders to as they are compiled.",
+    "GPU");
+
+DEFINE_bool(vsync, true, "Enable VSYNC.", "GPU");
+
+DEFINE_uint64(framerate_limit, 0,
+              "Maximum frames per second. 0 = Unlimited frames.\n"
+              "Defaults to 60, when set to 0, and VSYNC is enabled.",
+              "GPU");
+UPDATE_from_uint64(framerate_limit, 2024, 8, 31, 20, 60);
+
+DEFINE_bool(
+    gpu_allow_invalid_fetch_constants, true,
+    "Allow texture and vertex fetch constants with invalid type - generally "
+    "unsafe because the constant may contain completely invalid values, but "
+    "may be used to bypass fetch constant type errors in certain games until "
+    "the real reason why they're invalid is found.",
+    "GPU");
+DEFINE_bool(
+    gpu_allow_invalid_upload_range, false,
+    "Allows games to read data from pages that are marked as no access.",
+    "GPU");
+
+DEFINE_bool(
+    non_seamless_cube_map, true,
+    "Disable filtering between cube map faces near edges where possible "
+    "(Vulkan with VK_EXT_non_seamless_cube_map) to reproduce the Direct3D 9 "
+    "behavior.",
+    "GPU");
+
+// Extremely bright screen borders in 4D5307E6.
+// Reading between texels with half-pixel offset in 58410954.
+DEFINE_bool(
+    half_pixel_offset, true,
+    "Enable support of vertex half-pixel offset (D3D9 PA_SU_VTX_CNTL "
+    "PIX_CENTER). Generally games are aware of the half-pixel offset, and "
+    "having this enabled is the correct behavior (disabling this may "
+    "significantly break post-processing in some games), but in certain games "
+    "it might have been ignored, resulting in slight blurriness of UI "
+    "textures, for instance, when they are read between texels rather than "
+    "at texel centers, or the leftmost/topmost pixels may not be fully covered "
+    "when MSAA is used with fullscreen passes.",
+    "GPU");
+
+DEFINE_int32(occlusion_query_fake_lower_threshold, 80,
+             "Lower end of the fake sample count value written on "
+             "EVENT_WRITE_ZPD when real occlusion queries are disabled.\n"
+             "-1 writes nothing, resulting in some games that sit and hang.\n"
+             "0 means the fake result stays fully occluded.",
+             "GPU");
+DEFINE_int32(occlusion_query_fake_upper_threshold, 100,
+             "Upper end of the fake sample count value written on "
+             "EVENT_WRITE_ZPD when real occlusion queries are disabled.\n"
+             "Keep this higher than occlusion_query_fake_lower_threshold.\n"
+             "Ignored if occlusion_query_fake_lower_threshold is -1.",
+             "GPU");
+DEFINE_int32(occlusion_query_querybatch_range, 0,
+             "Range of fake sample count values to walk for titles using the "
+             "D3D QueryBatch standard before wrapping back to "
+             "occlusion_query_fake_lower_threshold.\n"
+             "This shouldn't be changed from the default value of 0 (disabled) "
+             "unless necessary for a specific title.",
+             "GPU");
+DEFINE_double(
+    occlusion_query_saturation, 1.0,
+    "Compress higher occlusion query sample counts before guest writeback.\n"
+    "This can be useful if effects such as lens flares appear too strong.\n"
+    "1.0 = default behavior\n"
+    "0.0 = collapse all nonzero sample counts to 1\n"
+    "Values around 0.90 are a good starting point for subtle tuning.",
+    "GPU");
+
+DEFINE_int32(anisotropic_override, -1,
+             "Forces anisotropic filtering (AF) for eligible textures.\n"
+             "Higher values keep textures sharper at oblique angles at the "
+             "cost of GPU bandwidth, though most GPUs handle up to 16x fine.\n"
+             "In rare cases, forcing AF can introduce visual artifacts.\n"
+             " -1 = No override\n"
+             "  0 = Disable anisotropic filtering\n"
+             "  1 = Force 1x anisotropic filtering\n"
+             "  2 = Force 2x anisotropic filtering\n"
+             "  3 = Force 4x anisotropic filtering\n"
+             "  4 = Force 8x anisotropic filtering\n"
+             "  5 = Force 16x anisotropic filtering",
+             "GPU");
+
+DEFINE_bool(no_discard_stencil_in_transfer_pipelines, false,
+            "Skip stencil bit discard in render target transfer pipelines. "
+            "May improve performance on some GPUs.",
+            "GPU");
+
+DEFINE_bool(gpu_3d_to_2d_texture, true,
+            "Handle shaders that sample 3D textures as 2D by creating a 2D "
+            "texture from slice 0 of the guest memory.",
+            "GPU");
+
+DEFINE_bool(
+    async_shader_compilation, true,
+    "Compile shaders and create pipelines asynchronously in background "
+    "threads. "
+    "Eliminates shader compilation stutter but may cause brief rendering "
+    "artifacts while pipelines are being created. When disabled, pipelines are "
+    "created synchronously which causes stutter but no visual artifacts.",
+    "GPU");
+
+DEFINE_bool(
+    ac6_ground_fix, false,
+    "This fixes(hide) issues with black ground in AC6. Use only in AC6. "
+    "Might cause issues in other titles.",
+    "HACKS");

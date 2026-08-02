@@ -5,21 +5,14 @@
  * Copyright 2022 Ben Vanik. All rights reserved.                             *
  * Released under the BSD license - see LICENSE in the root for more details. *
  ******************************************************************************
- *
- * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
  */
+
+#include <rex/graphics/pipeline/shader/interpreter.h>
 
 #include <cfloat>
 #include <cmath>
 #include <cstring>
-
-#include <rex/assert.h>
-#include <rex/graphics/pipeline/shader/interpreter.h>
-#include <rex/graphics/registers.h>
-#include <rex/graphics/trace_writer.h>
-#include <rex/graphics/xenos.h>
-#include <rex/math.h>
-#include <rex/types.h>
+#include <rex/graphics/xe_compat.h>
 
 namespace rex::graphics {
 
@@ -27,7 +20,8 @@ void ShaderInterpreter::Execute() {
   // For more consistency between invocations in case of a malformed shader.
   state_.Reset();
 
-  const uint32_t* bool_constants = &register_file_[XE_GPU_REG_SHADER_CONSTANT_BOOL_000_031];
+  const uint32_t* bool_constants =
+      &register_file_[XE_GPU_REG_SHADER_CONSTANT_BOOL_000_031];
 
   bool exec_ended = false;
   uint32_t cf_index_next = 1;
@@ -58,7 +52,8 @@ void ShaderInterpreter::Execute() {
       case ucode::ControlFlowOpcode::kCondExecPredClean:
       case ucode::ControlFlowOpcode::kCondExecPredCleanEnd: {
         ucode::ControlFlowExecInstruction cf_exec =
-            *reinterpret_cast<const ucode::ControlFlowExecInstruction*>(&cf_instr);
+            *reinterpret_cast<const ucode::ControlFlowExecInstruction*>(
+                &cf_instr);
 
         switch (cf_opcode) {
           case ucode::ControlFlowOpcode::kCondExec:
@@ -66,17 +61,20 @@ void ShaderInterpreter::Execute() {
           case ucode::ControlFlowOpcode::kCondExecPredClean:
           case ucode::ControlFlowOpcode::kCondExecPredCleanEnd: {
             const ucode::ControlFlowCondExecInstruction cf_cond_exec =
-                *reinterpret_cast<const ucode::ControlFlowCondExecInstruction*>(&cf_exec);
+                *reinterpret_cast<const ucode::ControlFlowCondExecInstruction*>(
+                    &cf_exec);
             uint32_t bool_address = cf_cond_exec.bool_address();
             if (cf_cond_exec.condition() !=
-                ((bool_constants[bool_address >> 5] & (UINT32_C(1) << (bool_address & 31))) != 0)) {
+                ((bool_constants[bool_address >> 5] &
+                  (UINT32_C(1) << (bool_address & 31))) != 0)) {
               continue;
             }
           } break;
           case ucode::ControlFlowOpcode::kCondExecPred:
           case ucode::ControlFlowOpcode::kCondExecPredEnd: {
             const ucode::ControlFlowCondExecPredInstruction cf_cond_exec_pred =
-                *reinterpret_cast<const ucode::ControlFlowCondExecPredInstruction*>(&cf_exec);
+                *reinterpret_cast<
+                    const ucode::ControlFlowCondExecPredInstruction*>(&cf_exec);
             if (cf_cond_exec_pred.condition() != state_.predicate) {
               continue;
             }
@@ -85,11 +83,14 @@ void ShaderInterpreter::Execute() {
             break;
         }
 
-        for (uint32_t exec_index = 0; exec_index < cf_exec.count(); ++exec_index) {
-          const uint32_t* exec_instruction = &ucode_[3 * (cf_exec.address() + exec_index)];
+        for (uint32_t exec_index = 0; exec_index < cf_exec.count();
+             ++exec_index) {
+          const uint32_t* exec_instruction =
+              &ucode_[3 * (cf_exec.address() + exec_index)];
           if ((cf_exec.sequence() >> (exec_index << 1)) & 0b01) {
             const ucode::FetchInstruction& fetch_instr =
-                *reinterpret_cast<const ucode::FetchInstruction*>(exec_instruction);
+                *reinterpret_cast<const ucode::FetchInstruction*>(
+                    exec_instruction);
             if (fetch_instr.is_predicated() &&
                 fetch_instr.predicate_condition() != state_.predicate) {
               continue;
@@ -99,13 +100,16 @@ void ShaderInterpreter::Execute() {
             } else {
               // Not supporting texture fetching (very complex).
               float zero_result[4] = {};
-              StoreFetchResult(fetch_instr.dest(), fetch_instr.is_dest_relative(),
+              StoreFetchResult(fetch_instr.dest(),
+                               fetch_instr.is_dest_relative(),
                                fetch_instr.dest_swizzle(), zero_result);
             }
           } else {
             const ucode::AluInstruction& alu_instr =
-                *reinterpret_cast<const ucode::AluInstruction*>(exec_instruction);
-            if (alu_instr.is_predicated() && alu_instr.predicate_condition() != state_.predicate) {
+                *reinterpret_cast<const ucode::AluInstruction*>(
+                    exec_instruction);
+            if (alu_instr.is_predicated() &&
+                alu_instr.predicate_condition() != state_.predicate) {
               continue;
             }
             ExecuteAluInstruction(alu_instr);
@@ -119,7 +123,8 @@ void ShaderInterpreter::Execute() {
 
       case ucode::ControlFlowOpcode::kLoopStart: {
         ucode::ControlFlowLoopStartInstruction cf_loop_start =
-            *reinterpret_cast<const ucode::ControlFlowLoopStartInstruction*>(&cf_instr);
+            *reinterpret_cast<const ucode::ControlFlowLoopStartInstruction*>(
+                &cf_instr);
         assert_true(state_.loop_stack_depth < 4);
         if (++state_.loop_stack_depth > 4) {
           cf_index_next = cf_loop_start.address();
@@ -128,7 +133,8 @@ void ShaderInterpreter::Execute() {
         auto loop_constant = register_file_.Get<xenos::LoopConstant>(
             XE_GPU_REG_SHADER_CONSTANT_LOOP_00 + cf_loop_start.loop_id());
         state_.loop_constants[state_.loop_stack_depth] = loop_constant;
-        uint32_t& loop_iterator_ref = state_.loop_iterators[state_.loop_stack_depth];
+        uint32_t& loop_iterator_ref =
+            state_.loop_iterators[state_.loop_stack_depth];
         if (!cf_loop_start.is_repeat()) {
           loop_iterator_ref = 0;
         }
@@ -150,15 +156,20 @@ void ShaderInterpreter::Execute() {
           continue;
         }
         ucode::ControlFlowLoopEndInstruction cf_loop_end =
-            *reinterpret_cast<const ucode::ControlFlowLoopEndInstruction*>(&cf_instr);
-        xenos::LoopConstant loop_constant = state_.loop_constants[state_.loop_stack_depth - 1];
+            *reinterpret_cast<const ucode::ControlFlowLoopEndInstruction*>(
+                &cf_instr);
+        xenos::LoopConstant loop_constant =
+            state_.loop_constants[state_.loop_stack_depth - 1];
         assert_zero(
             std::memcmp(&loop_constant,
-                        &register_file_[XE_GPU_REG_SHADER_CONSTANT_LOOP_00 + cf_loop_end.loop_id()],
+                        &register_file_[XE_GPU_REG_SHADER_CONSTANT_LOOP_00 +
+                                        cf_loop_end.loop_id()],
                         sizeof(loop_constant)));
-        uint32_t loop_iterator = ++state_.loop_iterators[state_.loop_stack_depth - 1];
+        uint32_t loop_iterator =
+            ++state_.loop_iterators[state_.loop_stack_depth - 1];
         if (loop_iterator < loop_constant.count &&
-            (!cf_loop_end.is_predicated_break() || cf_loop_end.condition() != state_.predicate)) {
+            (!cf_loop_end.is_predicated_break() ||
+             cf_loop_end.condition() != state_.predicate)) {
           cf_index_next = cf_loop_end.address();
           continue;
         }
@@ -171,7 +182,8 @@ void ShaderInterpreter::Execute() {
           continue;
         }
         const ucode::ControlFlowCondCallInstruction cf_cond_call =
-            *reinterpret_cast<const ucode::ControlFlowCondCallInstruction*>(&cf_instr);
+            *reinterpret_cast<const ucode::ControlFlowCondCallInstruction*>(
+                &cf_instr);
         if (!cf_cond_call.is_unconditional()) {
           if (cf_cond_call.is_predicated()) {
             if (cf_cond_call.condition() != state_.predicate) {
@@ -180,7 +192,8 @@ void ShaderInterpreter::Execute() {
           } else {
             uint32_t bool_address = cf_cond_call.bool_address();
             if (cf_cond_call.condition() !=
-                ((bool_constants[bool_address >> 5] & (UINT32_C(1) << (bool_address & 31))) != 0)) {
+                ((bool_constants[bool_address >> 5] &
+                  (UINT32_C(1) << (bool_address & 31))) != 0)) {
               continue;
             }
           }
@@ -200,7 +213,8 @@ void ShaderInterpreter::Execute() {
 
       case ucode::ControlFlowOpcode::kCondJmp: {
         const ucode::ControlFlowCondJmpInstruction cf_cond_jmp =
-            *reinterpret_cast<const ucode::ControlFlowCondJmpInstruction*>(&cf_instr);
+            *reinterpret_cast<const ucode::ControlFlowCondJmpInstruction*>(
+                &cf_instr);
         if (!cf_cond_jmp.is_unconditional()) {
           if (cf_cond_jmp.is_predicated()) {
             if (cf_cond_jmp.condition() != state_.predicate) {
@@ -209,7 +223,8 @@ void ShaderInterpreter::Execute() {
           } else {
             uint32_t bool_address = cf_cond_jmp.bool_address();
             if (cf_cond_jmp.condition() !=
-                ((bool_constants[bool_address >> 5] & (UINT32_C(1) << (bool_address & 31))) != 0)) {
+                ((bool_constants[bool_address >> 5] &
+                  (UINT32_C(1) << (bool_address & 31))) != 0)) {
               continue;
             }
           }
@@ -220,7 +235,8 @@ void ShaderInterpreter::Execute() {
       case ucode::ControlFlowOpcode::kAlloc: {
         if (export_sink_) {
           const ucode::ControlFlowAllocInstruction& cf_alloc =
-              *reinterpret_cast<const ucode::ControlFlowAllocInstruction*>(&cf_instr);
+              *reinterpret_cast<const ucode::ControlFlowAllocInstruction*>(
+                  &cf_instr);
           export_sink_->AllocExport(cf_alloc.alloc_type(), cf_alloc.size());
         }
       } break;
@@ -234,17 +250,19 @@ void ShaderInterpreter::Execute() {
   }
 }
 
-const std::array<float, 4> ShaderInterpreter::GetFloatConstant(uint32_t address, bool is_relative,
-                                                               bool relative_address_is_a0) const {
+const std::array<float, 4> ShaderInterpreter::GetFloatConstant(
+    uint32_t address, bool is_relative, bool relative_address_is_a0) const {
   int32_t index = int32_t(address);
   if (is_relative) {
-    index += relative_address_is_a0 ? state_.address_register : state_.GetLoopAddress();
+    index += relative_address_is_a0 ? state_.address_register
+                                    : state_.GetLoopAddress();
   }
   if (index < 0) {
     return std::array<float, 4>();
   }
   auto base_and_size_minus_1 = register_file_.Get<reg::SQ_VS_CONST>(
-      shader_type_ == xenos::ShaderType::kVertex ? XE_GPU_REG_SQ_VS_CONST : XE_GPU_REG_SQ_PS_CONST);
+      shader_type_ == xenos::ShaderType::kVertex ? XE_GPU_REG_SQ_VS_CONST
+                                                 : XE_GPU_REG_SQ_PS_CONST);
   if (uint32_t(index) > base_and_size_minus_1.size) {
     return std::array<float, 4>();
   }
@@ -253,7 +271,8 @@ const std::array<float, 4> ShaderInterpreter::GetFloatConstant(uint32_t address,
     return std::array<float, 4>();
   }
   std::array<float, 4> value;
-  std::memcpy(value.data(), &register_file_[XE_GPU_REG_SHADER_CONSTANT_000_X + 4 * index],
+  std::memcpy(value.data(),
+              &register_file_[XE_GPU_REG_SHADER_CONSTANT_000_X + 4 * index],
               sizeof(float) * 4);
   return value;
 }
@@ -276,26 +295,28 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
       bool vector_src_absolute = false;
       std::array<float, 4> vector_src_float_constant;
       if (instr.src_is_temp(1 + i)) {
-        vector_src_ptr =
-            GetTempRegister(ucode::AluInstruction::src_temp_reg(vector_src_register),
-                            ucode::AluInstruction::is_src_temp_relative(vector_src_register));
-        vector_src_absolute =
-            ucode::AluInstruction::is_src_temp_value_absolute(vector_src_register);
+        vector_src_ptr = GetTempRegister(
+            ucode::AluInstruction::src_temp_reg(vector_src_register),
+            ucode::AluInstruction::is_src_temp_relative(vector_src_register));
+        vector_src_absolute = ucode::AluInstruction::is_src_temp_value_absolute(
+            vector_src_register);
       } else {
-        vector_src_float_constant =
-            GetFloatConstant(vector_src_register, instr.src_const_is_addressed(1 + i),
-                             instr.is_const_address_register_relative());
+        vector_src_float_constant = GetFloatConstant(
+            vector_src_register, instr.src_const_is_addressed(1 + i),
+            instr.is_const_address_register_relative());
         vector_src_ptr = vector_src_float_constant.data();
       }
-      uint32_t vector_src_absolute_mask = ~(uint32_t(vector_src_absolute) << 31);
+      uint32_t vector_src_absolute_mask =
+          ~(uint32_t(vector_src_absolute) << 31);
       uint32_t vector_src_negate_bit = uint32_t(instr.src_negate(1 + i)) << 31;
       uint32_t vector_src_swizzle = instr.src_swizzle(1 + i);
       for (uint32_t j = 0; j < 4; ++j) {
-        float vector_src_component =
-            FlushDenormal(vector_src_ptr[ucode::AluInstruction::GetSwizzledComponentIndex(
+        float vector_src_component = FlushDenormal(
+            vector_src_ptr[ucode::AluInstruction::GetSwizzledComponentIndex(
                 vector_src_swizzle, j)]);
         *reinterpret_cast<uint32_t*>(&vector_src_component) =
-            (*reinterpret_cast<const uint32_t*>(&vector_src_component) & vector_src_absolute_mask) ^
+            (*reinterpret_cast<const uint32_t*>(&vector_src_component) &
+             vector_src_absolute_mask) ^
             vector_src_negate_bit;
         vector_operands[i][j] = vector_src_component;
       }
@@ -318,42 +339,48 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
       } break;
       case ucode::AluVectorOpcode::kMax: {
         for (uint32_t i = 0; i < 4; ++i) {
-          vector_result[i] = std::isgreaterequal(vector_operands[0][i], vector_operands[1][i])
-                                 ? vector_operands[0][i]
-                                 : vector_operands[1][i];
+          vector_result[i] =
+              std::isgreaterequal(vector_operands[0][i], vector_operands[1][i])
+                  ? vector_operands[0][i]
+                  : vector_operands[1][i];
         }
       } break;
       case ucode::AluVectorOpcode::kMin: {
         for (uint32_t i = 0; i < 4; ++i) {
-          vector_result[i] = std::isless(vector_operands[0][i], vector_operands[1][i])
-                                 ? vector_operands[0][i]
-                                 : vector_operands[1][i];
+          vector_result[i] =
+              std::isless(vector_operands[0][i], vector_operands[1][i])
+                  ? vector_operands[0][i]
+                  : vector_operands[1][i];
         }
       } break;
       case ucode::AluVectorOpcode::kSeq: {
         for (uint32_t i = 0; i < 4; ++i) {
-          vector_result[i] = float(vector_operands[0][i] == vector_operands[1][i]);
+          vector_result[i] =
+              float(vector_operands[0][i] == vector_operands[1][i]);
         }
       } break;
       case ucode::AluVectorOpcode::kSgt: {
         for (uint32_t i = 0; i < 4; ++i) {
-          vector_result[i] = float(std::isgreater(vector_operands[0][i], vector_operands[1][i]));
+          vector_result[i] = float(
+              std::isgreater(vector_operands[0][i], vector_operands[1][i]));
         }
       } break;
       case ucode::AluVectorOpcode::kSge: {
         for (uint32_t i = 0; i < 4; ++i) {
-          vector_result[i] =
-              float(std::isgreaterequal(vector_operands[0][i], vector_operands[1][i]));
+          vector_result[i] = float(std::isgreaterequal(vector_operands[0][i],
+                                                       vector_operands[1][i]));
         }
       } break;
       case ucode::AluVectorOpcode::kSne: {
         for (uint32_t i = 0; i < 4; ++i) {
-          vector_result[i] = float(vector_operands[0][i] != vector_operands[1][i]);
+          vector_result[i] =
+              float(vector_operands[0][i] != vector_operands[1][i]);
         }
       } break;
       case ucode::AluVectorOpcode::kFrc: {
         for (uint32_t i = 0; i < 4; ++i) {
-          vector_result[i] = vector_operands[0][i] - std::floor(vector_operands[0][i]);
+          vector_result[i] =
+              vector_operands[0][i] - std::floor(vector_operands[0][i]);
         }
       } break;
       case ucode::AluVectorOpcode::kTrunc: {
@@ -371,16 +398,18 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
           // Direct3D 9 behavior (0 or denormal * anything = +0).
           // Doing the addition rather than conditional assignment even for zero
           // operands because +0 + -0 must be +0.
-          vector_result[i] = ((vector_operands[0][i] && vector_operands[1][i])
-                                  ? vector_operands[0][i] * vector_operands[1][i]
-                                  : 0.0f) +
-                             vector_operands[2][i];
+          vector_result[i] =
+              ((vector_operands[0][i] && vector_operands[1][i])
+                   ? vector_operands[0][i] * vector_operands[1][i]
+                   : 0.0f) +
+              vector_operands[2][i];
         }
       } break;
       case ucode::AluVectorOpcode::kCndEq: {
         for (uint32_t i = 0; i < 4; ++i) {
-          vector_result[i] =
-              vector_operands[0][i] == 0.0f ? vector_operands[1][i] : vector_operands[2][i];
+          vector_result[i] = vector_operands[0][i] == 0.0f
+                                 ? vector_operands[1][i]
+                                 : vector_operands[2][i];
         }
       } break;
       case ucode::AluVectorOpcode::kCndGe: {
@@ -392,8 +421,9 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
       } break;
       case ucode::AluVectorOpcode::kCndGt: {
         for (uint32_t i = 0; i < 4; ++i) {
-          vector_result[i] = std::isgreater(vector_operands[0][i], 0.0f) ? vector_operands[1][i]
-                                                                         : vector_operands[2][i];
+          vector_result[i] = std::isgreater(vector_operands[0][i], 0.0f)
+                                 ? vector_operands[1][i]
+                                 : vector_operands[2][i];
         }
       } break;
       case ucode::AluVectorOpcode::kDp4: {
@@ -402,9 +432,10 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
           // Direct3D 9 behavior (0 or denormal * anything = +0).
           // Doing the addition even for zero operands because +0 + -0 must be
           // +0.
-          vector_result[0] += (vector_operands[0][i] && vector_operands[1][i])
-                                  ? vector_operands[0][i] * vector_operands[1][i]
-                                  : 0.0f;
+          vector_result[0] +=
+              (vector_operands[0][i] && vector_operands[1][i])
+                  ? vector_operands[0][i] * vector_operands[1][i]
+                  : 0.0f;
         }
         replicate_vector_result_x = true;
       } break;
@@ -414,9 +445,10 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
           // Direct3D 9 behavior (0 or denormal * anything = +0).
           // Doing the addition even for zero operands because +0 + -0 must be
           // +0.
-          vector_result[0] += (vector_operands[0][i] && vector_operands[1][i])
-                                  ? vector_operands[0][i] * vector_operands[1][i]
-                                  : 0.0f;
+          vector_result[0] +=
+              (vector_operands[0][i] && vector_operands[1][i])
+                  ? vector_operands[0][i] * vector_operands[1][i]
+                  : 0.0f;
         }
         replicate_vector_result_x = true;
       } break;
@@ -425,9 +457,10 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
         vector_result[0] = 0.0f;
         for (uint32_t i = 0; i < 2; ++i) {
           // Direct3D 9 behavior (0 or denormal * anything = +0).
-          vector_result[0] += (vector_operands[0][i] && vector_operands[1][i])
-                                  ? vector_operands[0][i] * vector_operands[1][i]
-                                  : 0.0f;
+          vector_result[0] +=
+              (vector_operands[0][i] && vector_operands[1][i])
+                  ? vector_operands[0][i] * vector_operands[1][i]
+                  : 0.0f;
         }
         vector_result[0] += vector_operands[2][0];
         replicate_vector_result_x = true;
@@ -465,10 +498,13 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
             std::isgreaterequal(vector_operands[0][0], vector_operands[0][2]) &&
             std::isgreaterequal(vector_operands[0][0], vector_operands[0][3])) {
           vector_result[0] = vector_operands[0][0];
-        } else if (std::isgreaterequal(vector_operands[0][1], vector_operands[0][2]) &&
-                   std::isgreaterequal(vector_operands[0][1], vector_operands[0][3])) {
+        } else if (std::isgreaterequal(vector_operands[0][1],
+                                       vector_operands[0][2]) &&
+                   std::isgreaterequal(vector_operands[0][1],
+                                       vector_operands[0][3])) {
           vector_result[0] = vector_operands[0][1];
-        } else if (std::isgreaterequal(vector_operands[0][2], vector_operands[0][3])) {
+        } else if (std::isgreaterequal(vector_operands[0][2],
+                                       vector_operands[0][3])) {
           vector_result[0] = vector_operands[0][2];
         } else {
           vector_result[0] = vector_operands[0][3];
@@ -476,66 +512,73 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
         replicate_vector_result_x = true;
       } break;
       case ucode::AluVectorOpcode::kSetpEqPush: {
-        state_.predicate = vector_operands[0][3] == 0.0f && vector_operands[1][3] == 0.0f;
-        vector_result[0] = (vector_operands[0][0] == 0.0f && vector_operands[1][0] == 0.0f)
-                               ? 0.0f
-                               : vector_operands[0][0] + 1.0f;
+        state_.predicate =
+            vector_operands[0][3] == 0.0f && vector_operands[1][3] == 0.0f;
+        vector_result[0] =
+            (vector_operands[0][0] == 0.0f && vector_operands[1][0] == 0.0f)
+                ? 0.0f
+                : vector_operands[0][0] + 1.0f;
         replicate_vector_result_x = true;
       } break;
       case ucode::AluVectorOpcode::kSetpNePush: {
-        state_.predicate = vector_operands[0][3] == 0.0f && vector_operands[1][3] != 0.0f;
-        vector_result[0] = (vector_operands[0][0] == 0.0f && vector_operands[1][0] != 0.0f)
+        state_.predicate =
+            vector_operands[0][3] == 0.0f && vector_operands[1][3] != 0.0f;
+        vector_result[0] =
+            (vector_operands[0][0] == 0.0f && vector_operands[1][0] != 0.0f)
+                ? 0.0f
+                : vector_operands[0][0] + 1.0f;
+        replicate_vector_result_x = true;
+      } break;
+      case ucode::AluVectorOpcode::kSetpGtPush: {
+        state_.predicate = vector_operands[0][3] == 0.0f &&
+                           std::isgreater(vector_operands[1][3], 0.0f);
+        vector_result[0] = (vector_operands[0][0] == 0.0f &&
+                            std::isgreater(vector_operands[1][0], 0.0f))
                                ? 0.0f
                                : vector_operands[0][0] + 1.0f;
         replicate_vector_result_x = true;
       } break;
-      case ucode::AluVectorOpcode::kSetpGtPush: {
-        state_.predicate =
-            vector_operands[0][3] == 0.0f && std::isgreater(vector_operands[1][3], 0.0f);
-        vector_result[0] =
-            (vector_operands[0][0] == 0.0f && std::isgreater(vector_operands[1][0], 0.0f))
-                ? 0.0f
-                : vector_operands[0][0] + 1.0f;
-        replicate_vector_result_x = true;
-      } break;
       case ucode::AluVectorOpcode::kSetpGePush: {
-        state_.predicate =
-            vector_operands[0][3] == 0.0f && std::isgreaterequal(vector_operands[1][3], 0.0f);
-        vector_result[0] =
-            (vector_operands[0][0] == 0.0f && std::isgreaterequal(vector_operands[1][0], 0.0f))
-                ? 0.0f
-                : vector_operands[0][0] + 1.0f;
+        state_.predicate = vector_operands[0][3] == 0.0f &&
+                           std::isgreaterequal(vector_operands[1][3], 0.0f);
+        vector_result[0] = (vector_operands[0][0] == 0.0f &&
+                            std::isgreaterequal(vector_operands[1][0], 0.0f))
+                               ? 0.0f
+                               : vector_operands[0][0] + 1.0f;
         replicate_vector_result_x = true;
       } break;
       // Not implementing pixel kill currently, the interpreter is currently
       // used only for vertex shaders.
       case ucode::AluVectorOpcode::kKillEq: {
-        vector_result[0] = float(vector_operands[0][0] == vector_operands[1][0] ||
-                                 vector_operands[0][1] == vector_operands[1][1] ||
-                                 vector_operands[0][2] == vector_operands[1][2] ||
-                                 vector_operands[0][3] == vector_operands[1][3]);
+        vector_result[0] =
+            float(vector_operands[0][0] == vector_operands[1][0] ||
+                  vector_operands[0][1] == vector_operands[1][1] ||
+                  vector_operands[0][2] == vector_operands[1][2] ||
+                  vector_operands[0][3] == vector_operands[1][3]);
         replicate_vector_result_x = true;
       } break;
       case ucode::AluVectorOpcode::kKillGt: {
-        vector_result[0] = float(std::isgreater(vector_operands[0][0], vector_operands[1][0]) ||
-                                 std::isgreater(vector_operands[0][1], vector_operands[1][1]) ||
-                                 std::isgreater(vector_operands[0][2], vector_operands[1][2]) ||
-                                 std::isgreater(vector_operands[0][3], vector_operands[1][3]));
+        vector_result[0] = float(
+            std::isgreater(vector_operands[0][0], vector_operands[1][0]) ||
+            std::isgreater(vector_operands[0][1], vector_operands[1][1]) ||
+            std::isgreater(vector_operands[0][2], vector_operands[1][2]) ||
+            std::isgreater(vector_operands[0][3], vector_operands[1][3]));
         replicate_vector_result_x = true;
       } break;
       case ucode::AluVectorOpcode::kKillGe: {
-        vector_result[0] =
-            float(std::isgreaterequal(vector_operands[0][0], vector_operands[1][0]) ||
-                  std::isgreaterequal(vector_operands[0][1], vector_operands[1][1]) ||
-                  std::isgreaterequal(vector_operands[0][2], vector_operands[1][2]) ||
-                  std::isgreaterequal(vector_operands[0][3], vector_operands[1][3]));
+        vector_result[0] = float(
+            std::isgreaterequal(vector_operands[0][0], vector_operands[1][0]) ||
+            std::isgreaterequal(vector_operands[0][1], vector_operands[1][1]) ||
+            std::isgreaterequal(vector_operands[0][2], vector_operands[1][2]) ||
+            std::isgreaterequal(vector_operands[0][3], vector_operands[1][3]));
         replicate_vector_result_x = true;
       } break;
       case ucode::AluVectorOpcode::kKillNe: {
-        vector_result[0] = float(vector_operands[0][0] != vector_operands[1][0] ||
-                                 vector_operands[0][1] != vector_operands[1][1] ||
-                                 vector_operands[0][2] != vector_operands[1][2] ||
-                                 vector_operands[0][3] != vector_operands[1][3]);
+        vector_result[0] =
+            float(vector_operands[0][0] != vector_operands[1][0] ||
+                  vector_operands[0][1] != vector_operands[1][1] ||
+                  vector_operands[0][2] != vector_operands[1][2] ||
+                  vector_operands[0][3] != vector_operands[1][3]);
         replicate_vector_result_x = true;
       } break;
       case ucode::AluVectorOpcode::kDst: {
@@ -548,12 +591,13 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
         vector_result[3] = vector_operands[1][3];
       } break;
       case ucode::AluVectorOpcode::kMaxA: {
-        state_.address_register =
-            int32_t(std::floor(rex::clamp_float(vector_operands[0][3], -256.0f, 255.0f) + 0.5f));
+        state_.address_register = int32_t(std::floor(
+            xe::clamp_float(vector_operands[0][3], -256.0f, 255.0f) + 0.5f));
         for (uint32_t i = 0; i < 4; ++i) {
-          vector_result[i] = std::isgreaterequal(vector_operands[0][i], vector_operands[1][i])
-                                 ? vector_operands[0][i]
-                                 : vector_operands[1][i];
+          vector_result[i] =
+              std::isgreaterequal(vector_operands[0][i], vector_operands[1][i])
+                  ? vector_operands[0][i]
+                  : vector_operands[1][i];
         }
       } break;
       default: {
@@ -581,37 +625,43 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
       uint32_t scalar_src_register = instr.src_reg(3);
       std::array<float, 4> scalar_src_float_constant;
       if (instr.src_is_temp(3)) {
-        scalar_src_ptr =
-            GetTempRegister(ucode::AluInstruction::src_temp_reg(scalar_src_register),
-                            ucode::AluInstruction::is_src_temp_relative(scalar_src_register));
-        scalar_src_absolute =
-            ucode::AluInstruction::is_src_temp_value_absolute(scalar_src_register);
+        scalar_src_ptr = GetTempRegister(
+            ucode::AluInstruction::src_temp_reg(scalar_src_register),
+            ucode::AluInstruction::is_src_temp_relative(scalar_src_register));
+        scalar_src_absolute = ucode::AluInstruction::is_src_temp_value_absolute(
+            scalar_src_register);
       } else {
-        scalar_src_float_constant =
-            GetFloatConstant(scalar_src_register, instr.src_const_is_addressed(3),
-                             instr.is_const_address_register_relative());
+        scalar_src_float_constant = GetFloatConstant(
+            scalar_src_register, instr.src_const_is_addressed(3),
+            instr.is_const_address_register_relative());
         scalar_src_ptr = scalar_src_float_constant.data();
       }
       uint32_t scalar_src_swizzle = instr.src_swizzle(3);
-      scalar_operand_component_count = scalar_opcode_info.single_operand_is_two_component ? 2 : 1;
+      scalar_operand_component_count =
+          scalar_opcode_info.single_operand_is_two_component ? 2 : 1;
       for (uint32_t i = 0; i < scalar_operand_component_count; ++i) {
-        scalar_operands[i] = scalar_src_ptr[ucode::AluInstruction::GetSwizzledComponentIndex(
-            scalar_src_swizzle, (3 + i) & 3)];
+        scalar_operands[i] =
+            scalar_src_ptr[ucode::AluInstruction::GetSwizzledComponentIndex(
+                scalar_src_swizzle, (3 + i) & 3)];
       }
     } break;
     case 2: {
       scalar_operand_component_count = 2;
-      uint32_t scalar_src_absolute_mask = ~(uint32_t(instr.abs_constants()) << 31);
+      uint32_t scalar_src_absolute_mask =
+          ~(uint32_t(instr.abs_constants()) << 31);
       uint32_t scalar_src_negate_bit = uint32_t(instr.src_negate(3)) << 31;
       uint32_t scalar_src_swizzle = instr.src_swizzle(3);
       // c#.w.
-      scalar_operands[0] = GetFloatConstant(instr.src_reg(3), instr.src_const_is_addressed(3),
-                                            instr.is_const_address_register_relative())
-          [ucode::AluInstruction::GetSwizzledComponentIndex(scalar_src_swizzle, 3)];
+      scalar_operands[0] =
+          GetFloatConstant(instr.src_reg(3), instr.src_const_is_addressed(3),
+                           instr.is_const_address_register_relative())
+              [ucode::AluInstruction::GetSwizzledComponentIndex(
+                  scalar_src_swizzle, 3)];
       // r#.x.
       scalar_operands[1] = GetTempRegister(
           instr.scalar_const_reg_op_src_temp_reg(),
-          false)[ucode::AluInstruction::GetSwizzledComponentIndex(scalar_src_swizzle, 0)];
+          false)[ucode::AluInstruction::GetSwizzledComponentIndex(
+          scalar_src_swizzle, 0)];
     } break;
   }
   if (scalar_operand_component_count) {
@@ -620,7 +670,8 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
     for (uint32_t i = 0; i < scalar_operand_component_count; ++i) {
       float scalar_operand = FlushDenormal(scalar_operands[i]);
       *reinterpret_cast<uint32_t*>(&scalar_operand) =
-          (*reinterpret_cast<const uint32_t*>(&scalar_operand) & scalar_src_absolute_mask) ^
+          (*reinterpret_cast<const uint32_t*>(&scalar_operand) &
+           scalar_src_absolute_mask) ^
           scalar_src_negate_bit;
       scalar_operands[i] = scalar_operand;
     }
@@ -649,25 +700,30 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
                                    : 0.0f;
     } break;
     case ucode::AluScalarOpcode::kMulsPrev2: {
-      if (state_.previous_scalar == -FLT_MAX || !std::isfinite(state_.previous_scalar) ||
-          !std::isfinite(scalar_operands[1]) || std::islessequal(scalar_operands[1], 0.0f)) {
+      if (state_.previous_scalar == -FLT_MAX ||
+          !std::isfinite(state_.previous_scalar) ||
+          !std::isfinite(scalar_operands[1]) ||
+          std::islessequal(scalar_operands[1], 0.0f)) {
         state_.previous_scalar = -FLT_MAX;
       } else {
         // Direct3D 9 behavior (0 or denormal * anything = +0).
-        state_.previous_scalar = (scalar_operands[0] && state_.previous_scalar)
-                                     ? scalar_operands[0] * state_.previous_scalar
-                                     : 0.0f;
+        state_.previous_scalar =
+            (scalar_operands[0] && state_.previous_scalar)
+                ? scalar_operands[0] * state_.previous_scalar
+                : 0.0f;
       }
     } break;
     case ucode::AluScalarOpcode::kMaxs: {
-      state_.previous_scalar = std::isgreaterequal(scalar_operands[0], scalar_operands[1])
-                                   ? scalar_operands[0]
-                                   : scalar_operands[1];
+      state_.previous_scalar =
+          std::isgreaterequal(scalar_operands[0], scalar_operands[1])
+              ? scalar_operands[0]
+              : scalar_operands[1];
     } break;
     case ucode::AluScalarOpcode::kMins: {
-      state_.previous_scalar = std::isless(scalar_operands[0], scalar_operands[1])
-                                   ? scalar_operands[0]
-                                   : scalar_operands[1];
+      state_.previous_scalar =
+          std::isless(scalar_operands[0], scalar_operands[1])
+              ? scalar_operands[0]
+              : scalar_operands[1];
     } break;
     case ucode::AluScalarOpcode::kSeqs: {
       state_.previous_scalar = float(scalar_operands[0] == 0.0f);
@@ -676,13 +732,15 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
       state_.previous_scalar = float(std::isgreater(scalar_operands[0], 0.0f));
     } break;
     case ucode::AluScalarOpcode::kSges: {
-      state_.previous_scalar = float(std::isgreaterequal(scalar_operands[0], 0.0f));
+      state_.previous_scalar =
+          float(std::isgreaterequal(scalar_operands[0], 0.0f));
     } break;
     case ucode::AluScalarOpcode::kSnes: {
       state_.previous_scalar = float(scalar_operands[0] != 0.0f);
     } break;
     case ucode::AluScalarOpcode::kFrcs: {
-      state_.previous_scalar = scalar_operands[0] - std::floor(scalar_operands[0]);
+      state_.previous_scalar =
+          scalar_operands[0] - std::floor(scalar_operands[0]);
     } break;
     case ucode::AluScalarOpcode::kTruncs: {
       state_.previous_scalar = std::trunc(scalar_operands[0]);
@@ -741,18 +799,20 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
       state_.previous_scalar = 1.0f / std::sqrt(scalar_operands[0]);
     } break;
     case ucode::AluScalarOpcode::kMaxAs: {
-      state_.address_register =
-          int32_t(std::floor(rex::clamp_float(scalar_operands[0], -256.0f, 255.0f) + 0.5f));
-      state_.previous_scalar = std::isgreaterequal(scalar_operands[0], scalar_operands[1])
-                                   ? scalar_operands[0]
-                                   : scalar_operands[1];
+      state_.address_register = int32_t(std::floor(
+          xe::clamp_float(scalar_operands[0], -256.0f, 255.0f) + 0.5f));
+      state_.previous_scalar =
+          std::isgreaterequal(scalar_operands[0], scalar_operands[1])
+              ? scalar_operands[0]
+              : scalar_operands[1];
     } break;
     case ucode::AluScalarOpcode::kMaxAsf: {
-      state_.address_register =
-          int32_t(std::floor(rex::clamp_float(scalar_operands[0], -256.0f, 255.0f)));
-      state_.previous_scalar = std::isgreaterequal(scalar_operands[0], scalar_operands[1])
-                                   ? scalar_operands[0]
-                                   : scalar_operands[1];
+      state_.address_register = int32_t(
+          std::floor(xe::clamp_float(scalar_operands[0], -256.0f, 255.0f)));
+      state_.previous_scalar =
+          std::isgreaterequal(scalar_operands[0], scalar_operands[1])
+              ? scalar_operands[0]
+              : scalar_operands[1];
     } break;
     case ucode::AluScalarOpcode::kSubs:
     case ucode::AluScalarOpcode::kSubsc0:
@@ -781,7 +841,9 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
     case ucode::AluScalarOpcode::kSetpInv: {
       state_.predicate = scalar_operands[0] == 1.0f;
       state_.previous_scalar =
-          state_.predicate ? 0.0f : (scalar_operands[0] == 0.0f ? 1.0f : scalar_operands[0]);
+          state_.predicate
+              ? 0.0f
+              : (scalar_operands[0] == 0.0f ? 1.0f : scalar_operands[0]);
     } break;
     case ucode::AluScalarOpcode::kSetpPop: {
       float new_counter = scalar_operands[0] - 1.0f;
@@ -805,7 +867,8 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
       state_.previous_scalar = float(std::isgreater(scalar_operands[0], 0.0f));
     } break;
     case ucode::AluScalarOpcode::kKillsGe: {
-      state_.previous_scalar = float(std::isgreaterequal(scalar_operands[0], 0.0f));
+      state_.previous_scalar =
+          float(std::isgreaterequal(scalar_operands[0], 0.0f));
     } break;
     case ucode::AluScalarOpcode::kKillsNe: {
       state_.previous_scalar = float(scalar_operands[0] != 0.0f);
@@ -831,19 +894,21 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
 
   if (instr.vector_clamp()) {
     for (uint32_t i = 0; i < 4; ++i) {
-      vector_result[i] = rex::saturate(vector_result[i]);
+      vector_result[i] = xe::saturate(vector_result[i]);
     }
   }
-  float scalar_result =
-      instr.scalar_clamp() ? rex::saturate(state_.previous_scalar) : state_.previous_scalar;
+  float scalar_result = instr.scalar_clamp()
+                            ? xe::saturate(state_.previous_scalar)
+                            : state_.previous_scalar;
 
   uint32_t scalar_result_write_mask = instr.GetScalarOpResultWriteMask();
   if (instr.is_export()) {
     if (export_sink_) {
       float export_value[4];
       uint32_t export_constant_1_mask = instr.GetConstant1WriteMask();
-      uint32_t export_mask = vector_result_write_mask | scalar_result_write_mask |
-                             instr.GetConstant0WriteMask() | export_constant_1_mask;
+      uint32_t export_mask =
+          vector_result_write_mask | scalar_result_write_mask |
+          instr.GetConstant0WriteMask() | export_constant_1_mask;
       for (uint32_t i = 0; i < 4; ++i) {
         uint32_t export_component_bit = UINT32_C(1) << i;
         float export_component = 0.0f;
@@ -858,13 +923,15 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
         }
         export_value[i] = export_component;
       }
-      export_sink_->Export(ucode::ExportRegister(instr.vector_dest()), export_value,
-                           vector_result_write_mask | scalar_result_write_mask |
-                               instr.GetConstant0WriteMask() | export_constant_1_mask);
+      export_sink_->Export(
+          ucode::ExportRegister(instr.vector_dest()), export_value,
+          vector_result_write_mask | scalar_result_write_mask |
+              instr.GetConstant0WriteMask() | export_constant_1_mask);
     }
   } else {
     if (vector_result_write_mask) {
-      float* vector_dest = GetTempRegister(instr.vector_dest(), instr.is_vector_dest_relative());
+      float* vector_dest =
+          GetTempRegister(instr.vector_dest(), instr.is_vector_dest_relative());
       for (uint32_t i = 0; i < 4; ++i) {
         if (vector_result_write_mask & (UINT32_C(1) << i)) {
           vector_dest[i] = vector_result[i];
@@ -872,7 +939,8 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
       }
     }
     if (scalar_result_write_mask) {
-      float* scalar_dest = GetTempRegister(instr.scalar_dest(), instr.is_scalar_dest_relative());
+      float* scalar_dest =
+          GetTempRegister(instr.scalar_dest(), instr.is_scalar_dest_relative());
       for (uint32_t i = 0; i < 4; ++i) {
         if (scalar_result_write_mask & (UINT32_C(1) << i)) {
           scalar_dest[i] = scalar_result;
@@ -882,8 +950,8 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
   }
 }
 
-void ShaderInterpreter::StoreFetchResult(uint32_t dest, bool is_dest_relative, uint32_t swizzle,
-                                         const float* value) {
+void ShaderInterpreter::StoreFetchResult(uint32_t dest, bool is_dest_relative,
+                                         uint32_t swizzle, const float* value) {
   float* dest_data = GetTempRegister(dest, is_dest_relative);
   for (uint32_t i = 0; i < 4; ++i) {
     ucode::FetchDestinationSwizzle component_swizzle =
@@ -916,7 +984,8 @@ void ShaderInterpreter::StoreFetchResult(uint32_t dest, bool is_dest_relative, u
   }
 }
 
-void ShaderInterpreter::ExecuteVertexFetchInstruction(ucode::VertexFetchInstruction instr) {
+void ShaderInterpreter::ExecuteVertexFetchInstruction(
+    ucode::VertexFetchInstruction instr) {
   // FIXME(Triang3l): Bit scan loops over components cause a link-time
   // optimization internal error in Visual Studio 2019, mainly in the format
   // unpacking. Using loops with up to 4 iterations here instead.
@@ -925,15 +994,17 @@ void ShaderInterpreter::ExecuteVertexFetchInstruction(ucode::VertexFetchInstruct
     state_.vfetch_full_last = instr;
   }
 
-  xenos::xe_gpu_vertex_fetch_t fetch_constant =
-      register_file_.GetVertexFetch(state_.vfetch_full_last.fetch_constant_index());
+  xenos::xe_gpu_vertex_fetch_t fetch_constant = register_file_.GetVertexFetch(
+      state_.vfetch_full_last.fetch_constant_index());
 
   if (!instr.is_mini_fetch()) {
     // Get the part of the address that depends on vfetch_full data.
-    uint32_t vertex_index = uint32_t(
-        std::floor(GetTempRegister(instr.src(), instr.is_src_relative())[instr.src_swizzle()] +
-                   (instr.is_index_rounded() ? 0.5f : 0.0f)));
-    state_.vfetch_address_dwords = instr.stride() * vertex_index + fetch_constant.address;
+    uint32_t vertex_index = uint32_t(std::floor(
+        GetTempRegister(instr.src(),
+                        instr.is_src_relative())[instr.src_swizzle()] +
+        (instr.is_index_rounded() ? 0.5f : 0.0f)));
+    state_.vfetch_address_dwords =
+        instr.stride() * vertex_index + fetch_constant.address;
   }
 
   // TODO(Triang3l): Find the default values for unused components.
@@ -946,11 +1017,12 @@ void ShaderInterpreter::ExecuteVertexFetchInstruction(ucode::VertexFetchInstruct
       used_result_components |= UINT32_C(1) << dest_component_swizzle;
     }
   }
-  uint32_t needed_dwords =
-      xenos::GetVertexFormatNeededWords(instr.data_format(), used_result_components);
+  uint32_t needed_dwords = xenos::GetVertexFormatNeededWords(
+      instr.data_format(), used_result_components);
   if (needed_dwords) {
     uint32_t data[4] = {};
-    const uint32_t* memory_dwords = reinterpret_cast<const uint32_t*>(memory_.physical_membase());
+    const uint32_t* memory_dwords =
+        reinterpret_cast<const uint32_t*>(memory_.physical_membase());
     uint32_t buffer_end_dwords = fetch_constant.address + fetch_constant.size;
     uint32_t dword_0_address_dwords =
         uint32_t(int32_t(state_.vfetch_address_dwords) + instr.offset());
@@ -963,9 +1035,11 @@ void ShaderInterpreter::ExecuteVertexFetchInstruction(ucode::VertexFetchInstruct
       if (dword_address_dwords >= fetch_constant.address &&
           dword_address_dwords < buffer_end_dwords) {
         if (trace_writer_) {
-          trace_writer_->WriteMemoryRead(sizeof(uint32_t) * dword_address_dwords, sizeof(uint32_t));
+          trace_writer_->WriteMemoryRead(
+              sizeof(uint32_t) * dword_address_dwords, sizeof(uint32_t));
         }
-        dword_value = xenos::GpuSwap(memory_dwords[dword_address_dwords], fetch_constant.endian);
+        dword_value = xenos::GpuSwap(memory_dwords[dword_address_dwords],
+                                     fetch_constant.endian);
       }
       data[i] = dword_value;
     }
@@ -976,7 +1050,8 @@ void ShaderInterpreter::ExecuteVertexFetchInstruction(ucode::VertexFetchInstruct
     switch (instr.data_format()) {
       case xenos::VertexFormat::k_8_8_8_8: {
         packed_components = 0b1111;
-        packed_widths[0] = packed_widths[1] = packed_widths[2] = packed_widths[3] = 8;
+        packed_widths[0] = packed_widths[1] = packed_widths[2] =
+            packed_widths[3] = 8;
         packed_offsets[1] = 8;
         packed_offsets[2] = 16;
         packed_offsets[3] = 24;
@@ -1010,25 +1085,26 @@ void ShaderInterpreter::ExecuteVertexFetchInstruction(ucode::VertexFetchInstruct
       } break;
       case xenos::VertexFormat::k_16_16_16_16: {
         packed_components = 0b1111;
-        packed_widths[0] = packed_widths[1] = packed_widths[2] = packed_widths[3] = 16;
+        packed_widths[0] = packed_widths[1] = packed_widths[2] =
+            packed_widths[3] = 16;
         packed_offsets[1] = packed_offsets[3] = 16;
         packed_dwords[1] = data[1];
       } break;
       case xenos::VertexFormat::k_16_16_16_16_FLOAT: {
         if (used_result_components & 0b1000) {
-          result[3] = rex::xenos_half_to_float(uint16_t(data[1] >> 16));
+          result[3] = xe::xenos_half_to_float(uint16_t(data[1] >> 16));
         }
         if (used_result_components & 0b0100) {
-          result[2] = rex::xenos_half_to_float(uint16_t(data[1]));
+          result[2] = xe::xenos_half_to_float(uint16_t(data[1]));
         }
       }
         [[fallthrough]];
       case xenos::VertexFormat::k_16_16_FLOAT: {
         if (used_result_components & 0b0010) {
-          result[1] = rex::xenos_half_to_float(uint16_t(data[0] >> 16));
+          result[1] = xe::xenos_half_to_float(uint16_t(data[0] >> 16));
         }
         if (used_result_components & 0b0001) {
-          result[0] = rex::xenos_half_to_float(uint16_t(data[0]));
+          result[0] = xe::xenos_half_to_float(uint16_t(data[0]));
         }
       } break;
       case xenos::VertexFormat::k_32:
@@ -1039,7 +1115,8 @@ void ShaderInterpreter::ExecuteVertexFetchInstruction(ucode::VertexFetchInstruct
             result[i] = float(int32_t(data[i]));
           }
           if (instr.is_normalized()) {
-            if (instr.signed_rf_mode() == xenos::SignedRepeatingFractionMode::kNoZero) {
+            if (instr.signed_rf_mode() ==
+                xenos::SignedRepeatingFractionMode::kNoZero) {
               for (uint32_t i = 0; i < 4; ++i) {
                 result[i] = (result[i] + 0.5f) / 2147483647.5f;
               }
@@ -1083,25 +1160,29 @@ void ShaderInterpreter::ExecuteVertexFetchInstruction(ucode::VertexFetchInstruct
             continue;
           }
           uint32_t packed_width = packed_widths[i];
-          result[i] =
-              float(int32_t(packed_dwords[i >> 1]) << (32 - (packed_width + packed_offsets[i])) >>
-                    (32 - packed_width));
+          result[i] = float(int32_t(packed_dwords[i >> 1])
+                                << (32 - (packed_width + packed_offsets[i])) >>
+                            (32 - packed_width));
         }
         if (instr.is_normalized()) {
-          if (instr.signed_rf_mode() == xenos::SignedRepeatingFractionMode::kNoZero) {
+          if (instr.signed_rf_mode() ==
+              xenos::SignedRepeatingFractionMode::kNoZero) {
             for (uint32_t i = 0; i < 4; ++i) {
               if (!(packed_components & (UINT32_C(1) << i))) {
                 continue;
               }
-              result[i] = (result[i] + 0.5f) * 2.0f / float((UINT32_C(1) << packed_widths[i]) - 1);
+              result[i] = (result[i] + 0.5f) * 2.0f /
+                          float((UINT32_C(1) << packed_widths[i]) - 1);
             }
           } else {
             for (uint32_t i = 0; i < 4; ++i) {
               if (!(packed_components & (UINT32_C(1) << i))) {
                 continue;
               }
-              result[i] =
-                  std::max(-1.0f, result[i] / float((UINT32_C(1) << (packed_widths[i] - 1)) - 1));
+              result[i] = std::max(
+                  -1.0f,
+                  result[i] /
+                      float((UINT32_C(1) << (packed_widths[i] - 1)) - 1));
             }
           }
         }
@@ -1111,7 +1192,8 @@ void ShaderInterpreter::ExecuteVertexFetchInstruction(ucode::VertexFetchInstruct
             continue;
           }
           uint32_t packed_width = packed_widths[i];
-          result[i] = float(packed_dwords[i >> 1] & ((UINT32_C(1) << packed_widths[i]) - 1));
+          result[i] = float(packed_dwords[i >> 1] &
+                            ((UINT32_C(1) << packed_widths[i]) - 1));
         }
         if (instr.is_normalized()) {
           for (uint32_t i = 0; i < 4; ++i) {
@@ -1133,7 +1215,8 @@ void ShaderInterpreter::ExecuteVertexFetchInstruction(ucode::VertexFetchInstruct
     }
   }
 
-  StoreFetchResult(instr.dest(), instr.is_dest_relative(), instr.dest_swizzle(), result);
+  StoreFetchResult(instr.dest(), instr.is_dest_relative(), instr.dest_swizzle(),
+                   result);
 }
 
 }  // namespace rex::graphics

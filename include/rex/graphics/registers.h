@@ -5,17 +5,17 @@
  * Copyright 2025 Ben Vanik. All rights reserved.                             *
  * Released under the BSD license - see LICENSE in the root for more details. *
  ******************************************************************************
- *
- * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
  */
 
-#pragma once
+#ifndef XENIA_GPU_REGISTERS_H_
+#define XENIA_GPU_REGISTERS_H_
 
 #include <cstdint>
 #include <cstdlib>
 
 #include <rex/assert.h>
 #include <rex/graphics/xenos.h>
+#include <rex/graphics/xe_compat.h>
 
 // Most 3D registers are the same as in the Qualcomm Adreno 200 (AMD Z430,
 // another R400 architecture family chip):
@@ -354,7 +354,8 @@ union alignas(uint32_t) VGT_MULTI_PRIM_IB_RESET_INDX {
     uint32_t reset_indx : 24;  // +0
     uint32_t _pad_24 : 8;      // +24
   };
-  static constexpr Register register_index = XE_GPU_REG_VGT_MULTI_PRIM_IB_RESET_INDX;
+  static constexpr Register register_index =
+      XE_GPU_REG_VGT_MULTI_PRIM_IB_RESET_INDX;
 };
 static_assert_size(VGT_MULTI_PRIM_IB_RESET_INDX, sizeof(uint32_t));
 
@@ -963,3 +964,5 @@ static_assert_size(DC_LUT_30_COLOR, sizeof(uint32_t));
 }  // namespace reg
 
 }  // namespace rex::graphics
+
+#endif  // XENIA_GPU_REGISTERS_H_

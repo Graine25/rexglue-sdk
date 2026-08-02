@@ -5,11 +5,10 @@
  * Copyright 2020 Ben Vanik. All rights reserved.                             *
  * Released under the BSD license - see LICENSE in the root for more details. *
  ******************************************************************************
- *
- * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
  */
 
-#pragma once
+#ifndef XENIA_GPU_DXBC_SHADER_H_
+#define XENIA_GPU_DXBC_SHADER_H_
 
 #include <atomic>
 #include <vector>
@@ -17,6 +16,7 @@
 #include <rex/graphics/pipeline/shader/dxbc_translator.h>
 #include <rex/graphics/pipeline/shader/shader.h>
 #include <rex/graphics/xenos.h>
+#include <rex/graphics/xe_compat.h>
 
 namespace rex::graphics {
 
@@ -28,8 +28,9 @@ class DxbcShader : public Shader {
         : Translation(shader, modification) {}
   };
 
-  DxbcShader(xenos::ShaderType shader_type, uint64_t ucode_data_hash, const uint32_t* ucode_dwords,
-             size_t ucode_dword_count, std::endian ucode_source_endian = std::endian::big);
+  DxbcShader(xenos::ShaderType shader_type, uint64_t ucode_data_hash,
+             const uint32_t* ucode_dwords, size_t ucode_dword_count,
+             std::endian ucode_source_endian = std::endian::big);
 
   // Resource bindings are gathered after the successful translation of any
   // modification for simplicity of translation (and they don't depend on
@@ -37,7 +38,8 @@ class DxbcShader : public Shader {
 
   static constexpr uint32_t kMaxTextureBindingIndexBits =
       DxbcShaderTranslator::kMaxTextureBindingIndexBits;
-  static constexpr uint32_t kMaxTextureBindings = DxbcShaderTranslator::kMaxTextureBindings;
+  static constexpr uint32_t kMaxTextureBindings =
+      DxbcShaderTranslator::kMaxTextureBindings;
   struct TextureBinding {
     uint32_t bindless_descriptor_index;
     uint32_t fetch_constant;
@@ -47,14 +49,18 @@ class DxbcShader : public Shader {
     bool is_signed;
   };
   // Safe to hash and compare with memcmp for layout hashing.
-  const std::vector<TextureBinding>& GetTextureBindingsAfterTranslation() const {
+  const std::vector<TextureBinding>& GetTextureBindingsAfterTranslation()
+      const {
     return texture_bindings_;
   }
-  uint32_t GetUsedTextureMaskAfterTranslation() const { return used_texture_mask_; }
+  const uint32_t GetUsedTextureMaskAfterTranslation() const {
+    return used_texture_mask_;
+  }
 
   static constexpr uint32_t kMaxSamplerBindingIndexBits =
       DxbcShaderTranslator::kMaxSamplerBindingIndexBits;
-  static constexpr uint32_t kMaxSamplerBindings = DxbcShaderTranslator::kMaxSamplerBindings;
+  static constexpr uint32_t kMaxSamplerBindings =
+      DxbcShaderTranslator::kMaxSamplerBindings;
   struct SamplerBinding {
     uint32_t bindless_descriptor_index;
     uint32_t fetch_constant;
@@ -63,7 +69,8 @@ class DxbcShader : public Shader {
     xenos::TextureFilter mip_filter;
     xenos::AnisoFilter aniso_filter;
   };
-  const std::vector<SamplerBinding>& GetSamplerBindingsAfterTranslation() const {
+  const std::vector<SamplerBinding>& GetSamplerBindingsAfterTranslation()
+      const {
     return sampler_bindings_;
   }
 
@@ -80,3 +87,5 @@ class DxbcShader : public Shader {
 };
 
 }  // namespace rex::graphics
+
+#endif  // XENIA_GPU_DXBC_SHADER_H_

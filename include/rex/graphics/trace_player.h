@@ -1,4 +1,3 @@
-#pragma once
 /**
  ******************************************************************************
  * Xenia : Xbox 360 Emulator Research Project                                 *
@@ -6,16 +5,18 @@
  * Copyright 2022 Ben Vanik. All rights reserved.                             *
  * Released under the BSD license - see LICENSE in the root for more details. *
  ******************************************************************************
- *
- * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
  */
+
+#ifndef XENIA_GPU_TRACE_PLAYER_H_
+#define XENIA_GPU_TRACE_PLAYER_H_
 
 #include <atomic>
 #include <string>
 
+#include <rex/thread.h>
 #include <rex/graphics/trace_protocol.h>
 #include <rex/graphics/trace_reader.h>
-#include <rex/thread.h>
+#include <rex/graphics/xe_compat.h>
 
 namespace rex::graphics {
 
@@ -46,8 +47,8 @@ class TracePlayer : public TraceReader {
   void WaitOnPlayback();
 
  private:
-  void PlayTrace(const uint8_t* trace_data, size_t trace_size, TracePlaybackMode playback_mode,
-                 bool clear_caches);
+  void PlayTrace(const uint8_t* trace_data, size_t trace_size,
+                 TracePlaybackMode playback_mode, bool clear_caches);
   void PlayTraceOnThread(const uint8_t* trace_data, size_t trace_size,
                          TracePlaybackMode playback_mode, bool clear_caches);
 
@@ -56,7 +57,9 @@ class TracePlayer : public TraceReader {
   int current_command_index_;
   bool playing_trace_ = false;
   std::atomic<uint32_t> playback_percent_ = {0};
-  std::unique_ptr<rex::thread::Event> playback_event_;
+  std::unique_ptr<xe::threading::Event> playback_event_;
 };
 
 }  // namespace rex::graphics
+
+#endif  // XENIA_GPU_TRACE_PLAYER_H_

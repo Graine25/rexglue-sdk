@@ -169,6 +169,12 @@ inline void* low_address(void* address) {
 
 void copy_128_aligned(void* dest, const void* src, size_t count);
 
+// Streaming aligned copy (Xenia's vastcpy). ReXGlue backs it with a plain copy;
+// the Xenos shared-memory upload path uses it for large aligned transfers.
+inline void vastcpy(void* dest, const void* src, uint32_t size) {
+  std::memcpy(dest, src, size);
+}
+
 void copy_and_swap_16_aligned(void* dest, const void* src, size_t count);
 void copy_and_swap_16_unaligned(void* dest, const void* src, size_t count);
 void copy_and_swap_32_aligned(void* dest, const void* src, size_t count);

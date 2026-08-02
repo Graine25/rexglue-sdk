@@ -5,15 +5,15 @@
  * Copyright 2022 Ben Vanik. All rights reserved.                             *
  * Released under the BSD license - see LICENSE in the root for more details. *
  ******************************************************************************
- *
- * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
  */
 
 #include <rex/graphics/format/ucode.h>
+#include <rex/graphics/xe_compat.h>
 
-namespace rex::graphics::ucode {
+namespace rex::graphics {
+namespace ucode {
 
-const AluScalarOpcodeInfo kAluScalarOpcodeInfos[64] = {
+constexpr AluScalarOpcodeInfo kAluScalarOpcodeInfos[64] = {
     {"adds", 1, true, kAluOpChangedStateNone},
     {"adds_prev", 1, false, kAluOpChangedStateNone},
     {"muls", 1, true, kAluOpChangedStateNone},
@@ -80,7 +80,7 @@ const AluScalarOpcodeInfo kAluScalarOpcodeInfos[64] = {
     {"opcode_63", 0, false, kAluOpChangedStateNone},
 };
 
-const AluVectorOpcodeInfo kAluVectorOpcodeInfos[32] = {
+constexpr AluVectorOpcodeInfo kAluVectorOpcodeInfos[32] = {
     {"add", {0b1111, 0b1111}, kAluOpChangedStateNone},
     {"mul", {0b1111, 0b1111}, kAluOpChangedStateNone},
     {"max", {0b1111, 0b1111}, kAluOpChangedStateNone},
@@ -115,4 +115,5 @@ const AluVectorOpcodeInfo kAluVectorOpcodeInfos[32] = {
     {"opcode_31", {}, kAluOpChangedStateNone},
 };
 
-}  // namespace rex::graphics::ucode
+}  // namespace ucode
+}  // namespace rex::graphics

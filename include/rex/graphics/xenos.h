@@ -5,19 +5,14 @@
  * Copyright 2020 Ben Vanik. All rights reserved.                             *
  * Released under the BSD license - see LICENSE in the root for more details. *
  ******************************************************************************
- *
- * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
  */
 
-#pragma once
+#ifndef XENIA_GPU_XENOS_H_
+#define XENIA_GPU_XENOS_H_
 
-#include <algorithm>
-
-#include <rex/assert.h>
 #include <rex/math.h>
 #include <rex/memory.h>
-#include <rex/platform.h>
-#include <rex/types.h>
+#include <rex/graphics/xe_compat.h>
 
 namespace rex::graphics {
 namespace xenos {
@@ -28,7 +23,7 @@ namespace xenos {
 // in bit fields (registers are 32-bit, and the microcode consists of triples of
 // 32-bit words).
 
-constexpr memory::fourcc_t kSwapSignature = memory::make_fourcc("SWAP");
+constexpr fourcc_t kSwapSignature = make_fourcc("SWAP");
 
 enum class ShaderType : uint32_t {
   kVertex = 0,
@@ -51,6 +46,9 @@ enum class PrimitiveType : uint32_t {
   kTriangleStrip = 0x06,
   kTriangleWithWFlags = 0x07,
   kRectangleList = 0x08,
+  kUnused1 = 0x09,
+  kUnused2 = 0x0A,
+  kUnused3 = 0x0B,
   kLineLoop = 0x0C,
   kQuadList = 0x0D,
   kQuadStrip = 0x0E,
@@ -113,7 +111,8 @@ enum class ClampMode : uint32_t {
 };
 
 constexpr bool ClampModeUsesBorder(ClampMode clamp_mode) {
-  return clamp_mode == ClampMode::kClampToBorder || clamp_mode == ClampMode::kMirrorClampToBorder;
+  return clamp_mode == ClampMode::kClampToBorder ||
+         clamp_mode == ClampMode::kMirrorClampToBorder;
 }
 
 // TEX_FORMAT_COMP, known as GPUSIGN on the Xbox 360.
@@ -325,7 +324,15 @@ constexpr bool IsColorRenderTargetFormat64bpp(ColorRenderTargetFormat format) {
          format == ColorRenderTargetFormat::k_32_32_FLOAT;
 }
 
-inline uint32_t GetColorRenderTargetFormatComponentCount(ColorRenderTargetFormat format) {
+// if 0, 1
+// if 1, 2
+// if 3, 4
+// 2 bits per entry, shift and add 1
+
+using ColorFormatComponentTable = uint32_t;
+
+static constexpr uint32_t GetComponentCountConst(
+    ColorRenderTargetFormat format) {
   switch (format) {
     case ColorRenderTargetFormat::k_8_8_8_8:
     case ColorRenderTargetFormat::k_8_8_8_8_GAMMA:
@@ -335,22 +342,55 @@ inline uint32_t GetColorRenderTargetFormatComponentCount(ColorRenderTargetFormat
     case ColorRenderTargetFormat::k_16_16_16_16_FLOAT:
     case ColorRenderTargetFormat::k_2_10_10_10_AS_10_10_10_10:
     case ColorRenderTargetFormat::k_2_10_10_10_FLOAT_AS_16_16_16_16:
-      return 4;
+      return 4 - 1;
     case ColorRenderTargetFormat::k_16_16:
     case ColorRenderTargetFormat::k_16_16_FLOAT:
     case ColorRenderTargetFormat::k_32_32_FLOAT:
-      return 2;
+      return 2 - 1;
     case ColorRenderTargetFormat::k_32_FLOAT:
-      return 1;
+      return 1 - 1;
     default:
-      assert_unhandled_case(format);
       return 0;
   }
 }
+namespace detail {
+static constexpr uint32_t encode_format_component_table() {
+  uint32_t result = 0;
 
+#define ADDFORMAT(name)                                           \
+  result |= GetComponentCountConst(ColorRenderTargetFormat::name) \
+            << (static_cast<uint32_t>(ColorRenderTargetFormat::name) * 2)
+  ADDFORMAT(k_8_8_8_8);
+  ADDFORMAT(k_8_8_8_8_GAMMA);
+  ADDFORMAT(k_2_10_10_10);
+  ADDFORMAT(k_2_10_10_10_FLOAT);
+
+  ADDFORMAT(k_16_16_16_16);
+  ADDFORMAT(k_16_16_16_16_FLOAT);
+  ADDFORMAT(k_2_10_10_10_AS_10_10_10_10);
+  ADDFORMAT(k_2_10_10_10_FLOAT_AS_16_16_16_16);
+
+  ADDFORMAT(k_16_16);
+  ADDFORMAT(k_16_16_FLOAT);
+  ADDFORMAT(k_32_32_FLOAT);
+  ADDFORMAT(k_32_FLOAT);
+  return result;
+}
+constexpr uint32_t color_format_component_table =
+    encode_format_component_table();
+
+}  // namespace detail
+constexpr uint32_t GetColorRenderTargetFormatComponentCount(
+    ColorRenderTargetFormat format) {
+  return ((detail::color_format_component_table >>
+           (static_cast<uint32_t>(format) * 2)) &
+          0b11) +
+         1;
+}
 // Returns the version of the format with the same packing and meaning of values
 // stored in it, but without blending precision modifiers.
-constexpr ColorRenderTargetFormat GetStorageColorFormat(ColorRenderTargetFormat format) {
+constexpr ColorRenderTargetFormat GetStorageColorFormat(
+    ColorRenderTargetFormat format) {
   switch (format) {
     case ColorRenderTargetFormat::k_2_10_10_10_AS_10_10_10_10:
       return ColorRenderTargetFormat::k_2_10_10_10;
@@ -379,10 +419,12 @@ float Float7e3To32(uint32_t f10);
 // floating-point number.
 // Converts an IEEE-754 32-bit floating-point number to Xenos floating-point
 // depth, rounding to the nearest even or towards zero.
-uint32_t Float32To20e4(float f32, bool round_to_nearest_even);
+XE_NOALIAS
+uint32_t Float32To20e4(float f32, bool round_to_nearest_even) noexcept;
 // Converts Xenos floating-point depth in bits 0:23 (not clamping) to an
 // IEEE-754 32-bit floating-point number.
-float Float20e4To32(uint32_t f24);
+XE_NOALIAS
+float Float20e4To32(uint32_t f24) noexcept;
 // Converts 24-bit unorm depth in the value (not clamping) to an IEEE-754 32-bit
 // floating-point number.
 constexpr float UNorm24To32(uint32_t n24) {
@@ -411,8 +453,8 @@ constexpr uint32_t kRenderTargetFormatBits =
 constexpr uint32_t kEdramTileWidthSamples = 80;
 constexpr uint32_t kEdramTileHeightSamples = 16;
 constexpr uint32_t kEdramTileCount = 2048;
-constexpr uint32_t kEdramSizeBytes =
-    kEdramTileCount * kEdramTileHeightSamples * kEdramTileWidthSamples * sizeof(uint32_t);
+constexpr uint32_t kEdramSizeBytes = kEdramTileCount * kEdramTileHeightSamples *
+                                     kEdramTileWidthSamples * sizeof(uint32_t);
 
 // RB_SURFACE_INFO::surface_pitch width.
 constexpr uint32_t kEdramPitchPixelsBits = 14;
@@ -420,10 +462,13 @@ constexpr uint32_t kEdramPitchPixelsBits = 14;
 // usable on the Xenos, which has periodic 11-bit EDRAM tile addressing.
 constexpr uint32_t kEdramBaseTilesBits = 11;
 
-constexpr uint32_t GetSurfacePitchTiles(uint32_t pitch_pixels, MsaaSamples msaa_samples,
+constexpr uint32_t GetSurfacePitchTiles(uint32_t pitch_pixels,
+                                        MsaaSamples msaa_samples,
                                         bool is_64bpp) {
-  uint32_t pitch_samples = pitch_pixels << uint32_t(msaa_samples >= MsaaSamples::k4X);
-  uint32_t pitch_tiles = (pitch_samples + (kEdramTileWidthSamples - 1)) / kEdramTileWidthSamples;
+  uint32_t pitch_samples = pitch_pixels
+                           << uint32_t(msaa_samples >= MsaaSamples::k4X);
+  uint32_t pitch_tiles =
+      (pitch_samples + (kEdramTileWidthSamples - 1)) / kEdramTileWidthSamples;
   if (is_64bpp) {
     pitch_tiles <<= 1;
   }
@@ -566,14 +611,19 @@ enum class ColorFormat : uint32_t {
 // Resolve writes unsigned data for fixed-point formats (so k_16_16 and
 // k_16_16_16_16 render target formats, which are signed and also have a
 // different range, are not equivalent to the respective texture formats).
-constexpr bool IsColorResolveFormatBitwiseEquivalent(ColorRenderTargetFormat render_target_format,
-                                                     ColorFormat color_format) {
+constexpr bool IsColorResolveFormatBitwiseEquivalent(
+    ColorRenderTargetFormat render_target_format, ColorFormat color_format) {
   switch (render_target_format) {
     case ColorRenderTargetFormat::k_8_8_8_8:
     // Shaders fetch data copied from k_8_8_8_8_GAMMA with TextureSign::kGamma.
+    // Gamma sources are decoded to linear by real hardware resolve, so with the
+    // decode enabled, GetCopyShader separately excludes all raw copies. Any
+    // title that keeps the encoding to fetch it back with kGamma re-aliases the
+    // surface as k_8_8_8_8.
     case ColorRenderTargetFormat::k_8_8_8_8_GAMMA:
       // TODO(Triang3l): Investigate k_8_8_8_8_A.
-      return color_format == ColorFormat::k_8_8_8_8 || color_format == ColorFormat::k_8_8_8_8_A ||
+      return color_format == ColorFormat::k_8_8_8_8 ||
+             color_format == ColorFormat::k_8_8_8_8_A ||
              color_format == ColorFormat::k_8_8_8_8_AS_16_16_16_16;
     case ColorRenderTargetFormat::k_2_10_10_10:
     case ColorRenderTargetFormat::k_2_10_10_10_AS_10_10_10_10:
@@ -638,7 +688,8 @@ inline int GetVertexFormatComponentCount(VertexFormat format) {
   }
 }
 
-inline uint32_t GetVertexFormatNeededWords(VertexFormat format, uint32_t used_components) {
+inline uint32_t GetVertexFormatNeededWords(VertexFormat format,
+                                           uint32_t used_components) {
   assert_zero(used_components & ~uint32_t(0b1111));
   if (!used_components) {
     return 0;
@@ -744,7 +795,8 @@ enum class MajorMode : uint32_t {
   kExplicit,
 };
 
-inline bool IsMajorModeExplicit(MajorMode major_mode, PrimitiveType primitive_type) {
+inline bool IsMajorModeExplicit(MajorMode major_mode,
+                                PrimitiveType primitive_type) {
   return major_mode != MajorMode::kImplicit ||
          primitive_type >= PrimitiveType::kExplicitMajorModeForceStart;
 }
@@ -774,7 +826,8 @@ enum class ArbitraryFilter : uint32_t {
 };
 
 constexpr uint32_t kMaxShaderTempRegistersLog2 = 6;
-constexpr uint32_t kMaxShaderTempRegisters = UINT32_C(1) << kMaxShaderTempRegistersLog2;
+constexpr uint32_t kMaxShaderTempRegisters = UINT32_C(1)
+                                             << kMaxShaderTempRegistersLog2;
 
 // a2xx_sq_ps_vtx_mode
 enum class VertexShaderExportMode : uint32_t {
@@ -807,10 +860,11 @@ enum class SampleControl : uint32_t {
 // distinctly bright pixels on the mesas/buttes, where extrapolation happens.
 // Interpolating certain values (ones that aren't used for gradient calculation,
 // not texture coordinates) at centroids fixes this issue.
-inline uint32_t GetInterpolatorSamplingPattern(MsaaSamples msaa_samples,
-                                               SampleControl sample_control,
-                                               uint32_t interpolator_control_sampling_pattern) {
-  if (msaa_samples == MsaaSamples::k1X || sample_control == SampleControl::kCentersOnly) {
+inline uint32_t GetInterpolatorSamplingPattern(
+    MsaaSamples msaa_samples, SampleControl sample_control,
+    uint32_t interpolator_control_sampling_pattern) {
+  if (msaa_samples == MsaaSamples::k1X ||
+      sample_control == SampleControl::kCentersOnly) {
     return ((1 << kMaxInterpolators) - 1) * uint32_t(SampleLocation::kCenter);
   }
   if (sample_control == SampleControl::kCentroidsOnly) {
@@ -975,7 +1029,8 @@ constexpr uint32_t kResolveAlignmentPixels = 1 << kResolveAlignmentPixelsLog2;
 // Same as RB_SURFACE_INFO::surface_pitch, RB_COPY_DEST_PITCH::copy_dest_pitch
 // and RB_COPY_DEST_PITCH::copy_dest_height.
 constexpr uint32_t kResolveSizeBits = 14;
-constexpr uint32_t kMaxResolveSize = (1 << kResolveSizeBits) - kResolveAlignmentPixels;
+constexpr uint32_t kMaxResolveSize =
+    (1 << kResolveSizeBits) - kResolveAlignmentPixels;
 
 enum class CopyCommand : uint32_t {
   kRaw = 0,
@@ -996,10 +1051,11 @@ enum class CopySampleSelect : uint32_t {
 };
 
 constexpr bool IsSingleCopySampleSelected(CopySampleSelect copy_sample_select) {
-  return copy_sample_select >= CopySampleSelect::k0 && copy_sample_select <= CopySampleSelect::k3;
+  return copy_sample_select >= CopySampleSelect::k0 &&
+         copy_sample_select <= CopySampleSelect::k3;
 }
 
-#define XE_GPU_MAKE_TEXTURE_SWIZZLE(x, y, z, w)                \
+#define XE_GPU_MAKE_TEXTURE_SWIZZLE(x, y, z, w)          \
   (((rex::graphics::xenos::XE_GPU_TEXTURE_SWIZZLE_##x) << 0) | \
    ((rex::graphics::xenos::XE_GPU_TEXTURE_SWIZZLE_##y) << 3) | \
    ((rex::graphics::xenos::XE_GPU_TEXTURE_SWIZZLE_##z) << 6) | \
@@ -1035,8 +1091,9 @@ inline uint16_t GpuSwap(uint16_t value, Endian endianness) {
       return value;
   }
 }
-
-inline uint32_t GpuSwap(uint32_t value, Endian endianness) {
+XE_FORCEINLINE
+XE_NOALIAS
+static uint32_t GpuSwapInline(uint32_t value, Endian endianness) {
   switch (endianness) {
     default:
     case Endian::kNone:
@@ -1048,11 +1105,16 @@ inline uint32_t GpuSwap(uint32_t value, Endian endianness) {
     case Endian::k8in32:
       // Swap bytes.
       // NOTE: we are likely doing two swaps here. Wasteful. Oh well.
-      return rex::byte_swap(value);
+      return xe::byte_swap(value);
     case Endian::k16in32:
       // Swap half words.
       return ((value >> 16) & 0xFFFF) | (value << 16);
   }
+}
+XE_NOINLINE
+XE_NOALIAS
+static uint32_t GpuSwap(uint32_t value, Endian endianness) {
+  return GpuSwapInline(value, endianness);
 }
 
 inline float GpuSwap(float value, Endian endianness) {
@@ -1065,13 +1127,9 @@ inline float GpuSwap(float value, Endian endianness) {
   return v.f;
 }
 
-inline uint32_t GpuToCpu(uint32_t p) {
-  return p;
-}
+inline uint32_t GpuToCpu(uint32_t p) { return p; }
 
-inline uint32_t CpuToGpu(uint32_t p) {
-  return p & 0x1FFFFFFF;
-}
+inline uint32_t CpuToGpu(uint32_t p) { return p & 0x1FFFFFFF; }
 
 // XE_GPU_REG_SHADER_CONSTANT_LOOP_*
 union alignas(uint32_t) LoopConstant {
@@ -1121,13 +1179,15 @@ static_assert_size(xe_gpu_vertex_fetch_t, sizeof(uint32_t) * 2);
 // slice / cube face (and of textures themselves), this number of bits is also
 // omitted from base_address and mip_address.
 constexpr uint32_t kTextureSubresourceAlignmentBytesLog2 = 12;
-constexpr uint32_t kTextureSubresourceAlignmentBytes = 1 << kTextureSubresourceAlignmentBytesLog2;
+constexpr uint32_t kTextureSubresourceAlignmentBytes =
+    1 << kTextureSubresourceAlignmentBytesLog2;
 
 // Texture fetch constant size field widths.
 constexpr uint32_t kTexture1DMaxWidthLog2 = 24;
 constexpr uint32_t kTexture1DMaxWidth = 1 << kTexture1DMaxWidthLog2;
 constexpr uint32_t kTexture2DCubeMaxWidthHeightLog2 = 13;
-constexpr uint32_t kTexture2DCubeMaxWidthHeight = 1 << kTexture2DCubeMaxWidthHeightLog2;
+constexpr uint32_t kTexture2DCubeMaxWidthHeight =
+    1 << kTexture2DCubeMaxWidthHeightLog2;
 constexpr uint32_t kTexture2DMaxStackDepthLog2 = 6;
 constexpr uint32_t kTexture2DMaxStackDepth = 1 << kTexture2DMaxStackDepthLog2;
 constexpr uint32_t kTexture3DMaxWidthHeightLog2 = 11;
@@ -1136,7 +1196,8 @@ constexpr uint32_t kTexture3DMaxDepthLog2 = 10;
 constexpr uint32_t kTexture3DMaxDepth = 1 << kTexture3DMaxDepthLog2;
 
 constexpr uint32_t kTextureMaxMips =
-    std::max(kTexture2DCubeMaxWidthHeightLog2, kTexture3DMaxWidthHeightLog2) + 1;
+    std::max(kTexture2DCubeMaxWidthHeightLog2, kTexture3DMaxWidthHeightLog2) +
+    1;
 
 constexpr uint32_t kTextureTileWidthHeightLog2 = 5;
 constexpr uint32_t kTextureTileWidthHeight = 1 << kTextureTileWidthHeightLog2;
@@ -1151,18 +1212,22 @@ constexpr uint32_t kTextureTileDepth = 1 << kTextureTileDepthLog2;
 // - 2D 4bpb+: 32x32
 // - 3D 1bpb: 64x32x8
 // - 3D 2bpb+: 32x32x8
-constexpr uint32_t GetTextureTiledXBaseGranularityLog2(bool is_3d, uint32_t bytes_per_block_log2) {
+constexpr uint32_t GetTextureTiledXBaseGranularityLog2(
+    bool is_3d, uint32_t bytes_per_block_log2) {
   return 7 - std::min(UINT32_C(2), bytes_per_block_log2 + uint32_t(is_3d));
 }
-constexpr uint32_t GetTextureTiledYBaseGranularityLog2(bool is_3d, uint32_t bytes_per_block_log2) {
+constexpr uint32_t GetTextureTiledYBaseGranularityLog2(
+    bool is_3d, uint32_t bytes_per_block_log2) {
   return is_3d ? 5 : (7 - std::min(UINT32_C(2), bytes_per_block_log2));
 }
 constexpr uint32_t kTextureTiledZBaseGranularityLog2 = 3;
-constexpr uint32_t kTextureTiledZBaseGranularity = 1 << kTextureTiledZBaseGranularityLog2;
+constexpr uint32_t kTextureTiledZBaseGranularity =
+    1 << kTextureTiledZBaseGranularityLog2;
 
 // Row pitch alignment of non-tiled textures.
 constexpr uint32_t kTextureLinearRowAlignmentBytesLog2 = 8;
-constexpr uint32_t kTextureLinearRowAlignmentBytes = 1 << kTextureLinearRowAlignmentBytesLog2;
+constexpr uint32_t kTextureLinearRowAlignmentBytes =
+    1 << kTextureLinearRowAlignmentBytesLog2;
 
 // XE_GPU_REG_SHADER_CONSTANT_FETCH_*
 union alignas(uint32_t) xe_gpu_texture_fetch_t {
@@ -1618,7 +1683,8 @@ enum Type3Opcode {
 };
 // clang-format on
 
-inline uint32_t MakePacketType0(uint16_t index, uint16_t count, bool one_reg = false) {
+inline uint32_t MakePacketType0(uint16_t index, uint16_t count,
+                                bool one_reg = false) {
   // ttcccccc cccccccc oiiiiiii iiiiiiii
   assert(index <= 0x7FFF);
   assert(count >= 1 && count <= 0x4000);
@@ -1637,12 +1703,20 @@ constexpr inline uint32_t MakePacketType2() {
   return (2u << 30);
 }
 
-inline uint32_t MakePacketType3(Type3Opcode opcode, uint16_t count, bool predicate = false) {
+inline uint32_t MakePacketType3(Type3Opcode opcode, uint16_t count,
+                                bool predicate = false) {
   // ttcccccc cccccccc ?ooooooo ???????p
   assert(opcode <= 0x7F);
   assert(count >= 1 && count <= 0x4000);
-  return (3u << 30) | (((count - 1) & 0x3FFF) << 16) | ((opcode & 0x7F) << 8) | (predicate ? 1 : 0);
+  return (3u << 30) | (((count - 1) & 0x3FFF) << 16) | ((opcode & 0x7F) << 8) |
+         (predicate ? 1 : 0);
 }
-
+/*
+ * pretty english descriptions of enumeration values for the packet disassembler
+ */
+const char* GetEndianEnglishDescription(xenos::Endian endian);
+const char* GetPrimitiveTypeEnglishDescription(xenos::PrimitiveType prim_type);
 }  // namespace xenos
 }  // namespace rex::graphics
+
+#endif  // XENIA_GPU_XENOS_H_

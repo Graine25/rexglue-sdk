@@ -5,11 +5,10 @@
  * Copyright 2021 Ben Vanik. All rights reserved.                             *
  * Released under the BSD license - see LICENSE in the root for more details. *
  ******************************************************************************
- *
- * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
  */
 
-#pragma once
+#ifndef XENIA_GPU_D3D12_D3D12_PRIMITIVE_PROCESSOR_H_
+#define XENIA_GPU_D3D12_D3D12_PRIMITIVE_PROCESSOR_H_
 
 #include <cstdint>
 #include <deque>
@@ -19,6 +18,7 @@
 #include <rex/graphics/primitive_processor.h>
 #include <rex/ui/d3d12/d3d12_api.h>
 #include <rex/ui/d3d12/d3d12_upload_buffer_pool.h>
+#include <rex/graphics/xe_compat.h>
 
 namespace rex::graphics::d3d12 {
 
@@ -26,8 +26,9 @@ class D3D12CommandProcessor;
 
 class D3D12PrimitiveProcessor final : public PrimitiveProcessor {
  public:
-  D3D12PrimitiveProcessor(const RegisterFile& register_file, memory::Memory& memory,
-                          TraceWriter& trace_writer, SharedMemory& shared_memory,
+  D3D12PrimitiveProcessor(const RegisterFile& register_file, Memory& memory,
+                          TraceWriter& trace_writer,
+                          SharedMemory& shared_memory,
                           D3D12CommandProcessor& command_processor)
       : PrimitiveProcessor(register_file, memory, trace_writer, shared_memory),
         command_processor_(command_processor) {}
@@ -42,23 +43,25 @@ class D3D12PrimitiveProcessor final : public PrimitiveProcessor {
   void BeginFrame();
   void EndFrame();
 
-  D3D12_GPU_VIRTUAL_ADDRESS GetBuiltinIndexBufferGpuAddress(size_t handle) const {
+  D3D12_GPU_VIRTUAL_ADDRESS GetBuiltinIndexBufferGpuAddress(
+      size_t handle) const {
     assert_not_null(builtin_index_buffer_);
     return D3D12_GPU_VIRTUAL_ADDRESS(builtin_index_buffer_gpu_address_ +
                                      GetBuiltinIndexBufferOffsetBytes(handle));
   }
-  D3D12_GPU_VIRTUAL_ADDRESS GetConvertedIndexBufferGpuAddress(size_t handle) const {
+  D3D12_GPU_VIRTUAL_ADDRESS GetConvertedIndexBufferGpuAddress(
+      size_t handle) const {
     return frame_index_buffers_[handle];
   }
 
  protected:
-  bool InitializeBuiltinIndexBuffer(size_t size_bytes,
-                                    std::function<void(void*)> fill_callback) override;
+  bool InitializeBuiltinIndexBuffer(
+      size_t size_bytes, std::function<void(void*)> fill_callback) override;
 
-  void* RequestHostConvertedIndexBufferForCurrentFrame(xenos::IndexFormat format,
-                                                       uint32_t index_count, bool coalign_for_simd,
-                                                       uint32_t coalignment_original_address,
-                                                       size_t& backend_handle_out) override;
+  void* RequestHostConvertedIndexBufferForCurrentFrame(
+      xenos::IndexFormat format, uint32_t index_count, bool coalign_for_simd,
+      uint32_t coalignment_original_address,
+      size_t& backend_handle_out) override;
 
  private:
   D3D12CommandProcessor& command_processor_;
@@ -79,3 +82,5 @@ class D3D12PrimitiveProcessor final : public PrimitiveProcessor {
 };
 
 }  // namespace rex::graphics::d3d12
+
+#endif  // XENIA_GPU_D3D12_D3D12_PRIMITIVE_PROCESSOR_H_

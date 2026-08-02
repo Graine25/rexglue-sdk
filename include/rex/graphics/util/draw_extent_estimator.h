@@ -1,4 +1,3 @@
-#pragma once
 /**
  ******************************************************************************
  * Xenia : Xbox 360 Emulator Research Project                                 *
@@ -6,24 +5,26 @@
  * Copyright 2022 Ben Vanik. All rights reserved.                             *
  * Released under the BSD license - see LICENSE in the root for more details. *
  ******************************************************************************
- *
- * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
  */
+
+#ifndef XENIA_GPU_DRAW_EXTENT_ESTIMATOR_H_
+#define XENIA_GPU_DRAW_EXTENT_ESTIMATOR_H_
 
 #include <cstdint>
 #include <optional>
 
-#include <rex/graphics/pipeline/shader/interpreter.h>
-#include <rex/graphics/pipeline/shader/shader.h>
 #include <rex/graphics/register_file.h>
+#include <rex/graphics/pipeline/shader/shader.h>
+#include <rex/graphics/pipeline/shader/interpreter.h>
 #include <rex/graphics/trace_writer.h>
-#include <rex/memory.h>
+#include <rex/system/xmemory.h>
+#include <rex/graphics/xe_compat.h>
 
 namespace rex::graphics {
 
 class DrawExtentEstimator {
  public:
-  DrawExtentEstimator(const RegisterFile& register_file, const memory::Memory& memory,
+  DrawExtentEstimator(const RegisterFile& register_file, const Memory& memory,
                       TraceWriter* trace_writer)
       : register_file_(register_file),
         memory_(memory),
@@ -34,7 +35,8 @@ class DrawExtentEstimator {
 
   // The shader must have its ucode analyzed.
   uint32_t EstimateVertexMaxY(const Shader& vertex_shader);
-  uint32_t EstimateMaxY(bool try_to_estimate_vertex_max_y, const Shader& vertex_shader);
+  uint32_t EstimateMaxY(bool try_to_estimate_vertex_max_y,
+                        const Shader& vertex_shader);
 
  private:
   class PositionYExportSink : public ShaderInterpreter::ExportSink {
@@ -62,10 +64,12 @@ class DrawExtentEstimator {
   };
 
   const RegisterFile& register_file_;
-  const memory::Memory& memory_;
+  const Memory& memory_;
   TraceWriter* trace_writer_;
 
   ShaderInterpreter shader_interpreter_;
 };
 
 }  // namespace rex::graphics
+
+#endif  // XENIA_GPU_DRAW_EXTENT_ESTIMATOR_H_
