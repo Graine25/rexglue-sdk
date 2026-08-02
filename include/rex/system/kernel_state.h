@@ -194,6 +194,10 @@ class KernelState {
   rex::filesystem::VirtualFileSystem* file_system() const { return file_system_; }
 
   uint32_t title_id() const;
+  // True once a guest title's executable module is loaded. Safe to call before
+  // any title is running (title_id() asserts in that state); mirrors Canary's
+  // KernelState::is_title_open().
+  bool is_title_open() const { return static_cast<bool>(executable_module_); }
   util::XdbfGameData title_xdbf() const;
   util::XdbfGameData module_xdbf(object_ref<UserModule> exec_module) const;
 

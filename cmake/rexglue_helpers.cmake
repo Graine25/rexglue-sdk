@@ -164,6 +164,15 @@ function(rexglue_configure_target target_name)
         ${REXGLUE_SHARE_DIR}/windowed_app_main_sdl.cpp
         ${REXGLUE_SHARE_DIR}/rex_app.cpp)
 
+    # rex_app.cpp compiles the imgui-based console overlay directly into the
+    # consumer target. imgui is linked PUBLIC by rexui, but that interface
+    # include dir does not reach a source compiled straight into the consumer
+    # when the SDK is used from a source tree (REXSDK_DIR), so add it explicitly.
+    if(TARGET imgui)
+        target_include_directories(${target_name} PRIVATE
+            $<TARGET_PROPERTY:imgui,INTERFACE_INCLUDE_DIRECTORIES>)
+    endif()
+
     target_compile_definitions(${target_name} PRIVATE
         REXGLUE_BUILD_CONFIG="$<CONFIG>")
 
