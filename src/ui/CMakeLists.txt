@@ -103,6 +103,7 @@ target_include_directories(rexui PUBLIC
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 target_include_directories(rexui PRIVATE
+    ${PROJECT_BINARY_DIR}/include  # Generated macOS Vulkan path data
     ${REXGLUE_ROOT}/src  # For ui/shaders/bytecode includes
     ${REXGLUE_ROOT}/thirdparty/stb  # stb_image.h for icon decoding
 )

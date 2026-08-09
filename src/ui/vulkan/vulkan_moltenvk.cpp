@@ -16,17 +16,18 @@
 #include "vulkan_moltenvk.h"
 
 #include <algorithm>
-#include <array>
 #include <cstdlib>
-#include <system_error>
 #include <string>
+#include <system_error>
 
 #include <rex/filesystem.h>
+#include <rex/ui/vulkan/macos_vulkan_paths.h>
 
 namespace rex::ui::vulkan {
 namespace {
 
 namespace fs = std::filesystem;
+namespace path_data = macos_vulkan_paths;
 
 bool PathExists(const fs::path& path) {
   std::error_code ec;
@@ -58,12 +59,12 @@ fs::path NormalizeSdkRoot(const fs::path& candidate) {
     return {};
   }
 
-  const std::array<fs::path, 2> roots = {candidate, candidate / "macOS"};
-  for (const fs::path& root : roots) {
-    if (PathExists(root / "lib" / "libvulkan.1.dylib") ||
-        PathExists(root / "Frameworks" / "vulkan.framework" / "vulkan") ||
-        PathExists(root / "lib" / "libMoltenVK.dylib")) {
-      return root;
+  for (std::string_view suffix : path_data::kRootSuffixes) {
+    fs::path root = suffix == "." ? candidate : candidate / suffix;
+    for (std::string_view marker : path_data::kRootMarkers) {
+      if (PathExists(root / marker)) {
+        return root;
+      }
     }
   }
 
@@ -96,12 +97,14 @@ void CollectExecutableRoots(std::vector<fs::path>& roots) {
   }
 }
 
-void AssignIfExists(fs::path& destination, std::initializer_list<fs::path> candidates) {
+template <typename Candidates>
+void AssignIfExists(fs::path& destination, const fs::path& root, const Candidates& candidates) {
   if (!destination.empty()) {
     return;
   }
 
-  for (const fs::path& candidate : candidates) {
+  for (std::string_view relative_path : candidates) {
+    fs::path candidate = root / relative_path;
     if (PathExists(candidate)) {
       destination = candidate;
       return;
@@ -114,14 +117,11 @@ std::vector<fs::path> CollectSdkRoots() {
 
   CollectExecutableRoots(roots);
 
-  const char* rex_vulkan_sdk = std::getenv("REX_VULKAN_SDK");
-  if (rex_vulkan_sdk && rex_vulkan_sdk[0]) {
-    AppendNormalizedRoot(roots, rex_vulkan_sdk);
-  }
-
-  const char* vulkan_sdk = std::getenv("VULKAN_SDK");
-  if (vulkan_sdk && vulkan_sdk[0]) {
-    AppendNormalizedRoot(roots, vulkan_sdk);
+  for (std::string_view environment_variable : path_data::kSdkEnvironmentVariables) {
+    const char* sdk_root = std::getenv(environment_variable.data());
+    if (sdk_root && sdk_root[0]) {
+      AppendNormalizedRoot(roots, sdk_root);
+    }
   }
 
   const char* home = std::getenv("HOME");
@@ -143,8 +143,9 @@ std::vector<fs::path> CollectSdkRoots() {
     }
   }
 
-  AppendNormalizedRoot(roots, "/usr/local");
-  AppendNormalizedRoot(roots, "/opt/homebrew");
+  for (std::string_view fallback_root : path_data::kFallbackRoots) {
+    AppendNormalizedRoot(roots, fallback_root);
+  }
 
   return roots;
 }
@@ -159,19 +160,12 @@ MacOSVulkanRuntimePaths DetectMacOSVulkanRuntimePaths() {
       paths.sdk_root = root;
     }
 
-    AppendExisting(paths.loader_candidates, root / "lib" / "libvulkan.1.dylib");
-    AppendExisting(paths.loader_candidates, root / "lib" / "libvulkan.dylib");
-    AppendExisting(paths.loader_candidates, root / "Frameworks" / "vulkan.framework" / "vulkan");
-    AppendExisting(paths.loader_candidates, root / "lib" / "libMoltenVK.dylib");
+    for (std::string_view loader_file : path_data::kLoaderFiles) {
+      AppendExisting(paths.loader_candidates, root / loader_file);
+    }
 
-    AssignIfExists(paths.spirv_tools_library,
-                   {root / "lib" / "libSPIRV-Tools-shared.dylib",
-                    root / "Frameworks" / "libSPIRV-Tools-shared.dylib"});
-
-    AssignIfExists(paths.moltenvk_icd,
-                   {root / "share" / "vulkan" / "icd.d" / "MoltenVK_icd.json",
-                    root / "Resources" / "vulkan" / "icd.d" / "MoltenVK_icd.json",
-                    root / "vulkan" / "icd.d" / "MoltenVK_icd.json"});
+    AssignIfExists(paths.spirv_tools_library, root, path_data::kSpirvToolsFiles);
+    AssignIfExists(paths.moltenvk_icd, root, path_data::kIcdFiles);
   }
 
   return paths;

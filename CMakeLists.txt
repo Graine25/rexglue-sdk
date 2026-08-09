@@ -59,6 +59,7 @@ set(REXGLUE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
 # SDK install support
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/rexglue_helpers.cmake)
 
 if(UNIX AND NOT APPLE)
     # Keep installed binaries self-contained by resolving shared libs relative
@@ -211,6 +212,8 @@ configure_file(
     ${CMAKE_CURRENT_BINARY_DIR}/include/rex/version.h
     @ONLY
 )
+rexglue_generate_macos_vulkan_paths_header(
+    ${CMAKE_CURRENT_BINARY_DIR}/include/rex/ui/vulkan/macos_vulkan_paths.h)
 
 # Output directories (multi-config appends /<Config>/ automatically)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${REXGLUE_ROOT}/out/${REX_PLATFORM}")
