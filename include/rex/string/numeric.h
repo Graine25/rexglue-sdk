@@ -22,8 +22,13 @@
 #include <fmt/format.h>
 
 #include <rex/assert.h>
+#include <rex/platform.h>
 #include <rex/string/utf8.h>
 #include <rex/vec128.h>
+
+#if REX_PLATFORM_MAC
+#include <locale.h>
+#endif
 
 namespace rex::string {
 
@@ -109,29 +114,53 @@ inline T ifs(const std::string_view value, bool force_hex) {
   return result;
 }
 
+#if REX_PLATFORM_MAC
 template <typename T>
 inline std::from_chars_result portable_float_from_chars(const char* first, const char* last,
                                                         T& value) {
   static_assert(std::is_same_v<T, float> || std::is_same_v<T, double>);
-  const size_t len = static_cast<size_t>(last - first);
-  char buf[128];
-  if (len >= sizeof(buf)) {
-    return {first, std::errc::result_out_of_range};
-  }
-  std::memcpy(buf, first, len);
-  buf[len] = '\0';
-  char* end = nullptr;
-  errno = 0;
-  if constexpr (std::is_same_v<T, float>) {
-    value = std::strtof(buf, &end);
-  } else {
-    value = std::strtod(buf, &end);
-  }
-  if (end == buf || errno == ERANGE) {
+
+  // AppleClang's libc++ does not provide floating-point std::from_chars on all
+  // supported SDK versions. Match from_chars semantics with a C-locale parser:
+  // no leading whitespace or '+', no global locale dependency, and distinct
+  // invalid-input and range errors.
+  if (first == last || *first == '+' || *first == ' ' || *first == '\f' || *first == '\n' ||
+      *first == '\r' || *first == '\t' || *first == '\v') {
     return {first, std::errc::invalid_argument};
   }
-  return {first + (end - buf), std::errc()};
+
+  const size_t len = static_cast<size_t>(last - first);
+  char buffer[128];
+  if (len >= sizeof(buffer)) {
+    return {first, std::errc::result_out_of_range};
+  }
+  std::memcpy(buffer, first, len);
+  buffer[len] = '\0';
+
+  static locale_t c_numeric_locale = newlocale(LC_NUMERIC_MASK, "C", nullptr);
+  if (!c_numeric_locale) {
+    return {first, std::errc::invalid_argument};
+  }
+
+  char* end = nullptr;
+  errno = 0;
+  T parsed_value;
+  if constexpr (std::is_same_v<T, float>) {
+    parsed_value = strtof_l(buffer, &end, c_numeric_locale);
+  } else {
+    parsed_value = strtod_l(buffer, &end, c_numeric_locale);
+  }
+  if (end == buffer) {
+    return {first, std::errc::invalid_argument};
+  }
+  if (errno == ERANGE) {
+    return {first + (end - buffer), std::errc::result_out_of_range};
+  }
+
+  value = parsed_value;
+  return {first + (end - buffer), std::errc()};
 }
+#endif
 
 // floating_point_from_string
 template <typename T, typename PUN>
@@ -160,7 +189,12 @@ inline T fpfs(const std::string_view value, bool force_hex) {
     }
     std::memcpy(&result, &pun, sizeof(PUN));
   } else {
+#if REX_PLATFORM_MAC
     auto [p, error] = portable_float_from_chars(range.data(), range.data() + range.size(), result);
+#else
+    auto [p, error] = std::from_chars(range.data(), range.data() + range.size(), result,
+                                      std::chars_format::general);
+#endif
     // TODO(gibbed): do something more with errors?
     if (error != std::errc()) {
       assert_always();
@@ -279,7 +313,11 @@ inline vec128_t from_string<vec128_t>(const std::string_view value, bool force_h
         assert_always();
         return vec128_t();
       }
+#if REX_PLATFORM_MAC
       auto result = detail::portable_float_from_chars(p, end, v.f32[i]);
+#else
+      auto result = std::from_chars(p, end, v.f32[i], std::chars_format::general);
+#endif
       if (result.ec != std::errc()) {
         assert_always();
         return vec128_t();
