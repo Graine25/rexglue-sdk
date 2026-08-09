@@ -232,6 +232,7 @@ static const std::unordered_map<int, Builder>& GetDispatchTable() {
       {PPC_INST_LDU, build_ldu},
       {PPC_INST_LDX, build_ldx},
       {PPC_INST_LDUX, build_ldux},
+      {PPC_INST_LDBRX, build_ldbrx},
       {PPC_INST_LWARX, build_lwarx},
       {PPC_INST_LDARX, build_ldarx},
       {PPC_INST_LFD, build_lfd},
@@ -267,6 +268,7 @@ static const std::unordered_map<int, Builder>& GetDispatchTable() {
       {PPC_INST_STDU, build_stdu},
       {PPC_INST_STDX, build_stdx},
       {PPC_INST_STDUX, build_stdux},
+      {PPC_INST_STDBRX, build_stdbrx},
       {PPC_INST_STFD, build_stfd},
       {PPC_INST_STFDU, build_stfdu},
       {PPC_INST_STFDUX, build_stfdux},
@@ -310,6 +312,7 @@ static const std::unordered_map<int, Builder>& GetDispatchTable() {
       {PPC_INST_STVX, build_stvx},
       {PPC_INST_STVX128, build_stvx},
       {PPC_INST_STVXL, build_stvx},
+      {PPC_INST_STVXL128, build_stvx},
 
       //=====================================================================
       // System
@@ -394,6 +397,7 @@ static const std::unordered_map<int, Builder>& GetDispatchTable() {
       {PPC_INST_MFLR, build_mflr},
       {PPC_INST_MFMSR, build_mfmsr},
       {PPC_INST_MFFS, build_mffs},
+      {PPC_INST_MFVSCR, build_mfvscr},
       {PPC_INST_MFTB, build_mftb},
       {PPC_INST_MFTBU, build_mftbu},
       {PPC_INST_MTCR, build_mtcr},
@@ -403,6 +407,7 @@ static const std::unordered_map<int, Builder>& GetDispatchTable() {
       {PPC_INST_MTLR, build_mtlr},
       {PPC_INST_MTMSRD, build_mtmsrd},
       {PPC_INST_MTFSF, build_mtfsf},
+      {PPC_INST_MTVSCR, build_mtvscr},
       {PPC_INST_MTXER, build_mtxer},
       {PPC_INST_CLRLDI, build_clrldi},
 

@@ -301,6 +301,7 @@ bool build_ld(BuilderContext& ctx);
 bool build_ldu(BuilderContext& ctx);
 bool build_ldx(BuilderContext& ctx);
 bool build_ldux(BuilderContext& ctx);
+bool build_ldbrx(BuilderContext& ctx);
 
 // Atomic load and reserve
 bool build_lwarx(BuilderContext& ctx);
@@ -346,6 +347,7 @@ bool build_std(BuilderContext& ctx);
 bool build_stdu(BuilderContext& ctx);
 bool build_stdx(BuilderContext& ctx);
 bool build_stdux(BuilderContext& ctx);
+bool build_stdbrx(BuilderContext& ctx);
 
 // Floating point stores
 bool build_stfd(BuilderContext& ctx);
@@ -416,6 +418,7 @@ bool build_mfocrf(BuilderContext& ctx);
 bool build_mflr(BuilderContext& ctx);
 bool build_mfmsr(BuilderContext& ctx);
 bool build_mffs(BuilderContext& ctx);
+bool build_mfvscr(BuilderContext& ctx);
 bool build_mftb(BuilderContext& ctx);
 bool build_mftbu(BuilderContext& ctx);
 
@@ -426,6 +429,7 @@ bool build_mtctr(BuilderContext& ctx);
 bool build_mtlr(BuilderContext& ctx);
 bool build_mtmsrd(BuilderContext& ctx);
 bool build_mtfsf(BuilderContext& ctx);
+bool build_mtvscr(BuilderContext& ctx);
 bool build_mtxer(BuilderContext& ctx);
 
 // Clear left double word immediate

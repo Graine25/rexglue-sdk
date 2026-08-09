@@ -263,6 +263,17 @@ bool build_mffs(BuilderContext& ctx) {
   return true;
 }
 
+bool build_mfvscr(BuilderContext& ctx) {
+  // Move From Vector Status and Control Register: vD gets VSCR in its low word,
+  // all other words zeroed. Only SAT (bit 127) is tracked by the context - NJ
+  // (bit 111) is implied by the VMX flush-to-zero mode managed via emit_set_flush_mode.
+  // NOTE: vectors are stored fully byte-reversed, so the guest's low word is u32[0].
+  ctx.println(
+      "\tsimde_mm_store_si128((simde__m128i*){}.u8, simde_mm_cvtsi32_si128(ctx.vscr_sat ? 1 : 0));",
+      ctx.v(ctx.insn.operands[0]));
+  return true;
+}
+
 bool build_mftb(BuilderContext& ctx) {
   // Xbox 360 timebase runs at 50 MHz (guest tick frequency)
   // Using REX_QUERY_TIMEBASE() macro provides properly scaled timing from the runtime
@@ -349,6 +360,13 @@ bool build_mtfsf(BuilderContext& ctx) {
         "\tctx.fpscr.storeFromGuest((ctx.fpscr.loadFromHost() & 0x{:08X}) | ({}.u32 & 0x{:08X}));",
         ~mask, ctx.f(ctx.insn.operands[1]), mask);
   }
+  return true;
+}
+
+bool build_mtvscr(BuilderContext& ctx) {
+  // Move To Vector Status and Control Register: VSCR = low word of vB.
+  // Only SAT is retained; see build_mfvscr.
+  ctx.println("\tctx.vscr_sat = ({}.u32[0] & 0x1) != 0;", ctx.v(ctx.insn.operands[0]));
   return true;
 }
 
