@@ -343,7 +343,14 @@ bool Protect(void* base_address, size_t length, PageAccess access, PageAccess* o
     *out_old_access = PageAccess::kNoAccess;
   }
 
-#if REX_PLATFORM_LINUX
+#if REX_PLATFORM_MAC
+  // mprotect doesn't report the previous protection. Query the Mach region
+  // before changing it so this matches VirtualProtect's out parameter.
+  if (out_old_access) {
+    size_t old_region_length = 0;
+    QueryProtect(base_address, old_region_length, *out_old_access);
+  }
+#elif REX_PLATFORM_LINUX
   // NOTE(tomc): we may want to look at doing this differently. it should work for now
   //             but there is a TOCTOU window between reading and changing.
   //             This really shouldn't be an issue since VirtualProtect on Windows isn't truly

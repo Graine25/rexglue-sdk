@@ -909,9 +909,7 @@ void BaseHeap::Dispose() {
   for (uint32_t page_number = 0; page_number < page_table_.size(); ++page_number) {
     auto& page_entry = page_table_[page_number];
     if (page_entry.state) {
-      rex::memory::DeallocFixed(TranslateRelative(page_number << page_size_shift_),
-                                static_cast<size_t>(page_entry.region_page_count)
-                                    << page_size_shift_,
+      rex::memory::DeallocFixed(TranslateRelative(page_number << page_size_shift_), 0,
                                 rex::memory::DeallocationType::kRelease);
       page_number += page_entry.region_page_count;
     }
@@ -1508,10 +1506,8 @@ bool BaseHeap::Protect(uint32_t address, uint32_t size, uint32_t protect, uint32
       *old_protect = FromPageAccess(old_protect_access);
     }
   } else {
-    REXSYS_WARN("BaseHeap::Protect: ignoring request as not 4k page aligned");
-#if !REX_PLATFORM_MAC
+    REXSYS_WARN("BaseHeap::Protect failed because the range is not host-page aligned");
     return false;
-#endif
   }
 
   // Perform table change.
