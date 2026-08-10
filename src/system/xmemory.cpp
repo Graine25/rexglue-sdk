@@ -499,12 +499,27 @@ uint32_t Memory::SearchAligned(uint32_t start, uint32_t end, const uint32_t* val
 bool Memory::AddVirtualMappedRange(uint32_t virtual_address, uint32_t mask, uint32_t size,
                                    void* context, runtime::MMIOReadCallback read_callback,
                                    runtime::MMIOWriteCallback write_callback) {
-  if (!rex::memory::AllocFixed(TranslateVirtual(virtual_address), size,
+  // AllocFixed rejects requests that don't cover whole host pages, so that a
+  // guest heap can never widen an mprotect over a neighbouring guest page that
+  // shares the host page. An MMIO window has no such neighbours - it owns its
+  // entire range - so rounding out to host page bounds is safe here, and it is
+  // required because callers describe these windows with mask-style sizes such
+  // as 0xFFFF, which is one byte short of 64 KB and therefore never a multiple
+  // of the 16 KB host page on Apple Silicon.
+  const size_t host_page_size = rex::memory::page_size();
+  uint8_t* const range_start = TranslateVirtual(virtual_address);
+  uint8_t* const aligned_start = reinterpret_cast<uint8_t*>(
+      reinterpret_cast<uintptr_t>(range_start) & ~(uintptr_t(host_page_size) - 1));
+  const size_t aligned_length =
+      rex::round_up(size_t(range_start - aligned_start) + size, host_page_size);
+  if (!rex::memory::AllocFixed(aligned_start, aligned_length,
                                rex::memory::AllocationType::kCommit,
                                rex::memory::PageAccess::kNoAccess)) {
     REXSYS_ERROR("Unable to map range; commit/protect failed");
     return false;
   }
+  // The MMIO registration keeps the caller's original size - only the host
+  // reservation is rounded.
   return mmio_handler_->RegisterRange(virtual_address, mask, size, context, read_callback,
                                       write_callback);
 }
