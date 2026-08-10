@@ -512,8 +512,7 @@ bool Memory::AddVirtualMappedRange(uint32_t virtual_address, uint32_t mask, uint
       reinterpret_cast<uintptr_t>(range_start) & ~(uintptr_t(host_page_size) - 1));
   const size_t aligned_length =
       rex::round_up(size_t(range_start - aligned_start) + size, host_page_size);
-  if (!rex::memory::AllocFixed(aligned_start, aligned_length,
-                               rex::memory::AllocationType::kCommit,
+  if (!rex::memory::AllocFixed(aligned_start, aligned_length, rex::memory::AllocationType::kCommit,
                                rex::memory::PageAccess::kNoAccess)) {
     REXSYS_ERROR("Unable to map range; commit/protect failed");
     return false;
@@ -967,17 +966,36 @@ bool BaseHeap::SyncHostPageAccess(uint32_t start_page_number, uint32_t end_page_
   const uint32_t host_page_last =
       uint32_t((guest_byte_end + host_address_offset_) / host_page_size);
 
-  for (uint32_t host_page = host_page_first; host_page <= host_page_last; ++host_page) {
-    const rex::memory::PageAccess access = get_host_page_access(host_page);
-    uint8_t* host_page_pointer = membase_ + heap_base_ + size_t(host_page) * host_page_size;
-    if (!rex::memory::Protect(host_page_pointer, host_page_size, access, nullptr)) {
-      REXSYS_ERROR("BaseHeap::SyncHostPageAccess failed for heap {:08X} host page {}", heap_base_,
-                   host_page);
+  // Coalesce neighbouring host pages that resolve to the same access into one
+  // Protect call. A bulk commit spans thousands of host pages and almost always
+  // wants a single uniform access for all of them, so protecting page by page
+  // would cost thousands of syscalls where one suffices.
+  uint8_t* const heap_host_base = membase_ + heap_base_;
+  uint32_t run_first_page = host_page_first;
+  rex::memory::PageAccess run_access = get_host_page_access(host_page_first);
+  const auto flush_run = [&](uint32_t run_last_page) {
+    const size_t run_length = (size_t(run_last_page - run_first_page) + 1) * host_page_size;
+    uint8_t* const run_pointer = heap_host_base + size_t(run_first_page) * host_page_size;
+    if (!rex::memory::Protect(run_pointer, run_length, run_access, nullptr)) {
+      REXSYS_ERROR("BaseHeap::SyncHostPageAccess failed for heap {:08X} host pages {}-{}",
+                   heap_base_, run_first_page, run_last_page);
       return false;
     }
-  }
+    return true;
+  };
 
-  return true;
+  for (uint32_t host_page = host_page_first + 1; host_page <= host_page_last; ++host_page) {
+    const rex::memory::PageAccess access = get_host_page_access(host_page);
+    if (access == run_access) {
+      continue;
+    }
+    if (!flush_run(host_page - 1)) {
+      return false;
+    }
+    run_first_page = host_page;
+    run_access = access;
+  }
+  return flush_run(host_page_last);
 }
 
 void BaseHeap::Initialize(memory::Memory* memory, uint8_t* membase, HeapType heap_type,
