@@ -232,6 +232,13 @@ class BaseHeap {
 
   bool SyncHostPageAccess(uint32_t start_page_number, uint32_t end_page_number);
 
+  // Whether a host page is currently write-watched for guest invalidation.
+  // SyncHostPageAccess must not restore write access to such a page: the watch
+  // is recorded in a flag that EnableAccessCallbacks checks before re-applying
+  // protection, so silently unprotecting here would disable the watch forever.
+  // Only PhysicalHeap tracks this; every other heap has no watch state.
+  virtual bool IsHostPageWriteWatched(uint32_t host_page_number) const { return false; }
+
   void Initialize(memory::Memory* memory, uint8_t* membase, HeapType heap_type, uint32_t heap_base,
                   uint32_t heap_size, uint32_t page_size, uint32_t host_address_offset = 0);
 
@@ -300,6 +307,8 @@ class PhysicalHeap : public BaseHeap {
   uint32_t GetPhysicalAddress(uint32_t address) const;
 
  protected:
+  bool IsHostPageWriteWatched(uint32_t host_page_number) const override;
+
   VirtualHeap* parent_heap_;
 
   uint32_t system_page_size_;
