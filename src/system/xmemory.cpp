@@ -888,6 +888,83 @@ BaseHeap::BaseHeap() : membase_(nullptr), heap_base_(0), heap_size_(0), page_siz
 
 BaseHeap::~BaseHeap() = default;
 
+bool BaseHeap::SyncHostPageAccess(uint32_t start_page_number, uint32_t end_page_number) {
+  const uint32_t host_page_size = memory_->system_page_size_;
+  if (page_size_ >= host_page_size) {
+    return true;
+  }
+
+  // Multiple guest pages may share one host page. Keep the guest page table as
+  // the source of truth, then grant the host page the union of the access needed
+  // by its committed guest pages. This can't enforce stricter access for one
+  // guest page while a neighbor needs broader access, but it keeps neighboring
+  // committed pages usable and allows guest protection metadata to stay exact.
+  const auto get_host_page_access = [&](uint32_t host_page_number) {
+    const uint64_t host_page_start = uint64_t(host_page_number) * host_page_size;
+    const uint64_t host_page_end = host_page_start + host_page_size;
+    const uint64_t heap_host_start = host_address_offset_;
+    const uint64_t heap_host_end = heap_host_start + heap_size_;
+    const uint64_t overlap_start = std::max(host_page_start, heap_host_start);
+    const uint64_t overlap_end = std::min(host_page_end, heap_host_end);
+    if (overlap_start >= overlap_end) {
+      return rex::memory::PageAccess::kNoAccess;
+    }
+
+    const uint32_t guest_page_start = uint32_t(overlap_start - heap_host_start) >> page_size_shift_;
+    const uint32_t guest_page_end = uint32_t(overlap_end - heap_host_start - 1) >> page_size_shift_;
+
+    bool has_read = false;
+    bool has_write = false;
+    bool has_committed = false;
+    for (uint32_t page_number = guest_page_start; page_number <= guest_page_end; ++page_number) {
+      const auto& page_entry = page_table_[page_number];
+      if (!(page_entry.state & memory::kMemoryAllocationCommit)) {
+        continue;
+      }
+      has_committed = true;
+      const rex::memory::PageAccess page_access = ToPageAccess(page_entry.current_protect);
+      if (page_access == rex::memory::PageAccess::kReadWrite) {
+        has_read = true;
+        has_write = true;
+        break;
+      }
+      if (page_access == rex::memory::PageAccess::kReadOnly) {
+        has_read = true;
+      }
+    }
+
+    // Physical aliases are intentionally left accessible after release unless
+    // protect_on_release is enabled because GPU users may still reference them.
+    if (!has_committed && heap_type_ == memory::HeapType::kGuestPhysical &&
+        !REXCVAR_GET(protect_on_release)) {
+      return rex::memory::PageAccess::kReadWrite;
+    }
+    if (!has_read) {
+      return rex::memory::PageAccess::kNoAccess;
+    }
+    return has_write ? rex::memory::PageAccess::kReadWrite : rex::memory::PageAccess::kReadOnly;
+  };
+
+  const uint64_t guest_byte_start = uint64_t(start_page_number) << page_size_shift_;
+  const uint64_t guest_byte_end = ((uint64_t(end_page_number) + 1) << page_size_shift_) - 1;
+  const uint32_t host_page_first =
+      uint32_t((guest_byte_start + host_address_offset_) / host_page_size);
+  const uint32_t host_page_last =
+      uint32_t((guest_byte_end + host_address_offset_) / host_page_size);
+
+  for (uint32_t host_page = host_page_first; host_page <= host_page_last; ++host_page) {
+    const rex::memory::PageAccess access = get_host_page_access(host_page);
+    uint8_t* host_page_pointer = membase_ + heap_base_ + size_t(host_page) * host_page_size;
+    if (!rex::memory::Protect(host_page_pointer, host_page_size, access, nullptr)) {
+      REXSYS_ERROR("BaseHeap::SyncHostPageAccess failed for heap {:08X} host page {}", heap_base_,
+                   host_page);
+      return false;
+    }
+  }
+
+  return true;
+}
+
 void BaseHeap::Initialize(memory::Memory* memory, uint8_t* membase, HeapType heap_type,
                           uint32_t heap_base, uint32_t heap_size, uint32_t page_size,
                           uint32_t host_address_offset) {
@@ -1165,7 +1242,7 @@ bool BaseHeap::AllocFixed(uint32_t base_address, uint32_t size, uint32_t alignme
   // Allocate from host.
   if (allocation_type == memory::kMemoryAllocationReserve) {
     // Reserve is not needed, as we are mapped already.
-  } else {
+  } else if (page_size_ >= memory_->system_page_size_) {
     auto alloc_type = (allocation_type & memory::kMemoryAllocationCommit)
                           ? rex::memory::AllocationType::kCommit
                           : rex::memory::AllocationType::kReserve;
@@ -1175,10 +1252,6 @@ bool BaseHeap::AllocFixed(uint32_t base_address, uint32_t size, uint32_t alignme
     if (!result) {
       REXSYS_ERROR("BaseHeap::AllocFixed failed to alloc range from host");
       return false;
-    }
-
-    if (REXCVAR_GET(scribble_heap) && protect & memory::kMemoryProtectWrite) {
-      std::memset(result, 0xCD, page_count << page_size_shift_);
     }
   }
 
@@ -1196,6 +1269,16 @@ bool BaseHeap::AllocFixed(uint32_t base_address, uint32_t size, uint32_t alignme
     page_entry.allocation_protect = protect;
     page_entry.current_protect = protect;
     page_entry.state = memory::kMemoryAllocationReserve | allocation_type;
+  }
+
+  if (!SyncHostPageAccess(start_page_number, end_page_number)) {
+    return false;
+  }
+
+  if (allocation_type != memory::kMemoryAllocationReserve && REXCVAR_GET(scribble_heap) &&
+      (protect & memory::kMemoryProtectWrite)) {
+    std::memset(TranslateRelative(start_page_number << page_size_shift_), 0xCD,
+                page_count << page_size_shift_);
   }
 
   return true;
@@ -1319,7 +1402,7 @@ bool BaseHeap::AllocRange(uint32_t low_address, uint32_t high_address, uint32_t 
   // Allocate from host.
   if (allocation_type == memory::kMemoryAllocationReserve) {
     // Reserve is not needed, as we are mapped already.
-  } else {
+  } else if (page_size_ >= memory_->system_page_size_) {
     auto alloc_type = (allocation_type & memory::kMemoryAllocationCommit)
                           ? rex::memory::AllocationType::kCommit
                           : rex::memory::AllocationType::kReserve;
@@ -1329,10 +1412,6 @@ bool BaseHeap::AllocRange(uint32_t low_address, uint32_t high_address, uint32_t 
     if (!result) {
       REXSYS_ERROR("BaseHeap::Alloc failed to alloc range from host");
       return false;
-    }
-
-    if (REXCVAR_GET(scribble_heap) && (protect & memory::kMemoryProtectWrite)) {
-      std::memset(result, 0xCD, page_count << page_size_shift_);
     }
   }
 
@@ -1347,6 +1426,16 @@ bool BaseHeap::AllocRange(uint32_t low_address, uint32_t high_address, uint32_t 
     page_entry.allocation_protect = protect;
     page_entry.current_protect = protect;
     page_entry.state = memory::kMemoryAllocationReserve | allocation_type;
+  }
+
+  if (!SyncHostPageAccess(start_page_number, end_page_number)) {
+    return false;
+  }
+
+  if (allocation_type != memory::kMemoryAllocationReserve && REXCVAR_GET(scribble_heap) &&
+      (protect & memory::kMemoryProtectWrite)) {
+    std::memset(TranslateRelative(start_page_number << page_size_shift_), 0xCD,
+                page_count << page_size_shift_);
   }
 
   *out_address = heap_base_ + (start_page_number << page_size_shift_);
@@ -1377,6 +1466,10 @@ bool BaseHeap::Decommit(uint32_t address, uint32_t size) {
   for (uint32_t page_number = start_page_number; page_number <= end_page_number; ++page_number) {
     auto& page_entry = page_table_[page_number];
     page_entry.state &= ~memory::kMemoryAllocationCommit;
+  }
+
+  if (!SyncHostPageAccess(start_page_number, end_page_number)) {
+    return false;
   }
 
   return true;
@@ -1434,6 +1527,10 @@ bool BaseHeap::Release(uint32_t base_address, uint32_t* out_region_size) {
     unreserved_page_count_++;
   }
 
+  if (!SyncHostPageAccess(base_page_number, end_page_number)) {
+    return false;
+  }
+
   return true;
 }
 
@@ -1488,12 +1585,10 @@ bool BaseHeap::Protect(uint32_t address, uint32_t size, uint32_t protect, uint32
     }
   }
 
-  // Attempt host change (hopefully won't fail).
-  // We can only do this if our size matches system page granularity.
-  uint32_t page_count = end_page_number - start_page_number + 1;
-  if (page_size_ == rex::memory::page_size() ||
-      (((page_count << page_size_shift_) % rex::memory::page_size() == 0) &&
-       ((start_page_number << page_size_shift_) % rex::memory::page_size() == 0))) {
+  // Change host protection directly when guest pages are at least as large as
+  // host pages. Smaller guest pages are reconciled after the page table update.
+  if (page_size_ >= memory_->system_page_size_) {
+    const uint32_t page_count = end_page_number - start_page_number + 1;
     memory::PageAccess old_protect_access;
     if (!rex::memory::Protect(TranslateRelative(start_page_number << page_size_shift_),
                               page_count << page_size_shift_, ToPageAccess(protect),
@@ -1506,14 +1601,19 @@ bool BaseHeap::Protect(uint32_t address, uint32_t size, uint32_t protect, uint32
       *old_protect = FromPageAccess(old_protect_access);
     }
   } else {
-    REXSYS_WARN("BaseHeap::Protect failed because the range is not host-page aligned");
-    return false;
+    if (old_protect) {
+      *old_protect = page_table_[start_page_number].current_protect;
+    }
   }
 
   // Perform table change.
   for (uint32_t page_number = start_page_number; page_number <= end_page_number; ++page_number) {
     auto& page_entry = page_table_[page_number];
     page_entry.current_protect = protect;
+  }
+
+  if (!SyncHostPageAccess(start_page_number, end_page_number)) {
+    return false;
   }
 
   return true;
@@ -1909,6 +2009,7 @@ void PhysicalHeap::EnableAccessCallbacks(uint32_t physical_address, uint32_t len
       REXSYS_ERROR("Access callback page OOB: system_page={} guest_page={} offset=0x{:X}", i,
                    guest_page_number, host_address_offset());
       assert_always();
+      continue;
     }
     rex::memory::PageAccess current_page_access =
         ToPageAccess(page_table_[guest_page_number].current_protect);

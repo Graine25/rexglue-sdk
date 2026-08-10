@@ -60,30 +60,28 @@
 namespace rex {
 namespace memory {
 
-// Convert filesystem path to a valid shm_open name (must start with /, no other slashes).
-// macOS enforces a 31-character total limit; names exceeding 30 chars after the leading '/'
-// are folded to a 16-char hex hash to stay within bounds.
+// Convert a filesystem path to a valid shm_open name (must start with /, no other slashes).
+// macOS enforces a 31-character total limit, so long names are folded from the full path rather
+// than only the filename. This keeps equal filenames in different directories distinct.
 static std::string MakeShmName(const std::filesystem::path& path) {
-#if REX_PLATFORM_MAC
-  std::string name = "/" + path.filename().string();
-  if (name.size() > 30) {
-    std::size_t h = std::hash<std::string>{}(name);
-    char hash_buf[24];
-    std::snprintf(hash_buf, sizeof(hash_buf), "/%016zx", h);
-    name = hash_buf;
-  }
-  return name;
-#else
   std::string name = path.string();
   for (char& c : name) {
-    if (c == '/')
+    if (c == '/') {
       c = '_';
+    }
   }
   if (name.empty() || name[0] != '/') {
     name.insert(name.begin(), '/');
   }
-  return name;
+#if REX_PLATFORM_MAC
+  if (name.size() > 30) {
+    const std::size_t h = std::hash<std::string>{}(name);
+    char hash_buf[24];
+    std::snprintf(hash_buf, sizeof(hash_buf), "/%016zx", h);
+    name = hash_buf;
+  }
 #endif
+  return name;
 }
 
 #if REX_PLATFORM_ANDROID
@@ -261,15 +259,17 @@ void* AllocFixed(void* base_address, size_t length, AllocationType allocation_ty
   }
 
     // On macOS, MAP_FIXED_NOREPLACE is unavailable. kCommit on a pre-reserved
-    // range uses page-aligned mprotect to avoid clobbering the existing reservation.
+    // range uses mprotect to avoid clobbering the existing reservation. Do not
+    // widen sub-host-page requests here - higher-level guest heaps must reconcile
+    // all guest permissions sharing a host page first.
 #if REX_PLATFORM_MAC
   if (base_address != nullptr && allocation_type == AllocationType::kCommit) {
     const size_t host_page = page_size();
-    const uintptr_t aligned_addr = reinterpret_cast<uintptr_t>(base_address) & ~(host_page - 1);
-    const uintptr_t end_addr =
-        (reinterpret_cast<uintptr_t>(base_address) + length + host_page - 1) & ~(host_page - 1);
-    if (mprotect(reinterpret_cast<void*>(aligned_addr), end_addr - aligned_addr,
-                 static_cast<int>(prot_requested)) == 0) {
+    const uintptr_t address = reinterpret_cast<uintptr_t>(base_address);
+    if ((address % host_page) != 0 || (length % host_page) != 0) {
+      return nullptr;
+    }
+    if (mprotect(base_address, length, static_cast<int>(prot_requested)) == 0) {
       return base_address;
     }
     return nullptr;
