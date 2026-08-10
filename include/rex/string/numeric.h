@@ -209,10 +209,13 @@ inline T fpfs(const std::string_view value, bool force_hex) {
 
 }  // namespace detail
 
+// The single definition of what counts as a true boolean string. Config files,
+// the command line, cvar change callbacks and the settings UI all funnel
+// through here so a value accepted in one place can't be rejected in another.
 template <>
 inline bool from_string<bool>(const std::string_view value, bool force_hex) {
   (void)force_hex;
-  return value == "true" || value == "1";
+  return value == "true" || value == "1" || value == "yes";
 }
 
 template <>
