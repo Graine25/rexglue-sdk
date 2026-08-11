@@ -230,7 +230,23 @@ class BaseHeap {
  protected:
   BaseHeap();
 
+  // Callers must hold the global critical region - see
+  // AcquireHostPageReconcileLock.
   bool SyncHostPageAccess(uint32_t start_page_number, uint32_t end_page_number);
+
+  // Acquires the global critical region for operations that will run the host
+  // page reconcile pass, which reads watch state guarded by it.
+  //
+  // It must be taken before heap_mutex_, not partway through: mutex.h requires
+  // the global region to be acquired first and held longest, and
+  // PhysicalHeap::Decommit/Release/Protect already call down into BaseHeap
+  // with it held. Acquiring it inside SyncHostPageAccess instead would give
+  // those paths heap_mutex_ -> global while PhysicalHeap has global ->
+  // heap_mutex_, which deadlocks.
+  //
+  // Returns an empty (unlocked) guard when guest pages are at least host page
+  // sized, since no reconcile happens then and the lock would be pure cost.
+  std::unique_lock<std::recursive_mutex> AcquireHostPageReconcileLock() const;
 
   // Whether a host page is currently write-watched for guest invalidation.
   // SyncHostPageAccess must not restore write access to such a page: the watch

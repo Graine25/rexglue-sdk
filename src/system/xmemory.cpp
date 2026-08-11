@@ -902,16 +902,22 @@ BaseHeap::BaseHeap() : membase_(nullptr), heap_base_(0), heap_size_(0), page_siz
 
 BaseHeap::~BaseHeap() = default;
 
+std::unique_lock<std::recursive_mutex> BaseHeap::AcquireHostPageReconcileLock() const {
+  if (page_size_ >= memory_->system_page_size_) {
+    return {};
+  }
+  return rex::thread::global_critical_region::AcquireDirect();
+}
+
 bool BaseHeap::SyncHostPageAccess(uint32_t start_page_number, uint32_t end_page_number) {
   const uint32_t host_page_size = memory_->system_page_size_;
   if (page_size_ >= host_page_size) {
     return true;
   }
 
-  // Held because the watch flags consulted below are guarded by it, and the
-  // decision must not race EnableAccessCallbacks setting a bit. Recursive, so
-  // callers that already hold it are fine.
-  auto global_lock = rex::thread::global_critical_region::AcquireDirect();
+  // The global critical region guards the watch flags read below and must
+  // already be held by the caller (AcquireHostPageReconcileLock), acquired
+  // ahead of heap_mutex_ so this never inverts against PhysicalHeap.
 
   // Multiple guest pages may share one host page. Keep the guest page table as
   // the source of truth, then grant the host page the union of the access needed
@@ -1159,6 +1165,10 @@ bool BaseHeap::Restore(stream::ByteStream* stream) {
   const bool reconcile_host_pages = page_size_ < host_page_size;
   uint32_t writable_host_page = UINT32_MAX;
 
+  // Restore doesn't take heap_mutex_, but SyncHostPageAccess below still needs
+  // the global critical region held by its caller.
+  auto global_lock = AcquireHostPageReconcileLock();
+
   for (size_t i = 0; i < page_table_.size(); i++) {
     auto& page = page_table_[i];
     page.qword = stream->Read<uint64_t>();
@@ -1297,6 +1307,9 @@ bool BaseHeap::AllocFixed(uint32_t base_address, uint32_t size, uint32_t alignme
     return false;
   }
 
+  // Global critical region before heap_mutex_ - see
+  // AcquireHostPageReconcileLock for why the order matters.
+  auto global_lock = AcquireHostPageReconcileLock();
   std::lock_guard<std::recursive_mutex> heap_lock(heap_mutex_);
 
   // - If we are reserving the entire range requested must not be already
@@ -1395,6 +1408,9 @@ bool BaseHeap::AllocRange(uint32_t low_address, uint32_t high_address, uint32_t 
     return false;
   }
 
+  // Global critical region before heap_mutex_ - see
+  // AcquireHostPageReconcileLock for why the order matters.
+  auto global_lock = AcquireHostPageReconcileLock();
   std::lock_guard<std::recursive_mutex> heap_lock(heap_mutex_);
 
   // Find a free page range.
@@ -1532,6 +1548,9 @@ bool BaseHeap::Decommit(uint32_t address, uint32_t size) {
   start_page_number = std::min(uint32_t(page_table_.size()) - 1, start_page_number);
   end_page_number = std::min(uint32_t(page_table_.size()) - 1, end_page_number);
 
+  // Global critical region before heap_mutex_ - see
+  // AcquireHostPageReconcileLock for why the order matters.
+  auto global_lock = AcquireHostPageReconcileLock();
   std::lock_guard<std::recursive_mutex> heap_lock(heap_mutex_);
 
   // Release from host.
@@ -1559,6 +1578,9 @@ bool BaseHeap::Decommit(uint32_t address, uint32_t size) {
 }
 
 bool BaseHeap::Release(uint32_t base_address, uint32_t* out_region_size) {
+  // Global critical region before heap_mutex_ - see
+  // AcquireHostPageReconcileLock for why the order matters.
+  auto global_lock = AcquireHostPageReconcileLock();
   std::lock_guard<std::recursive_mutex> heap_lock(heap_mutex_);
 
   // Given address must be a region base address.
@@ -1650,6 +1672,9 @@ bool BaseHeap::Protect(uint32_t address, uint32_t size, uint32_t protect, uint32
     return false;
   }
 
+  // Global critical region before heap_mutex_ - see
+  // AcquireHostPageReconcileLock for why the order matters.
+  auto global_lock = AcquireHostPageReconcileLock();
   std::lock_guard<std::recursive_mutex> heap_lock(heap_mutex_);
 
   // Ensure all pages are in the same reserved region and all are committed.
