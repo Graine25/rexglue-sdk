@@ -1896,6 +1896,9 @@ bool PhysicalHeap::Alloc(uint32_t size, uint32_t alignment, uint32_t allocation_
   size = rex::round_up(size, page_size_);
   alignment = rex::round_up(alignment, page_size_);
 
+  // Global critical region before heap_mutex_ - see
+  // AcquireHostPageReconcileLock for why the order matters.
+  auto global_lock = AcquireHostPageReconcileLock();
   std::lock_guard<std::recursive_mutex> heap_lock(heap_mutex_);
 
   // Allocate from parent heap (gets our physical address in 0-512mb).
@@ -1926,6 +1929,9 @@ bool PhysicalHeap::AllocFixed(uint32_t base_address, uint32_t size, uint32_t ali
   size = rex::round_up(size, page_size_);
   alignment = rex::round_up(alignment, page_size_);
 
+  // Global critical region before heap_mutex_ - see
+  // AcquireHostPageReconcileLock for why the order matters.
+  auto global_lock = AcquireHostPageReconcileLock();
   std::lock_guard<std::recursive_mutex> heap_lock(heap_mutex_);
 
   // Allocate from parent heap (gets our physical address in 0-512mb).
@@ -1959,6 +1965,9 @@ bool PhysicalHeap::AllocRange(uint32_t low_address, uint32_t high_address, uint3
   size = rex::round_up(size, page_size_);
   alignment = rex::round_up(alignment, page_size_);
 
+  // Global critical region before heap_mutex_ - see
+  // AcquireHostPageReconcileLock for why the order matters.
+  auto global_lock = AcquireHostPageReconcileLock();
   std::lock_guard<std::recursive_mutex> heap_lock(heap_mutex_);
 
   // Allocate from parent heap (gets our physical address in 0-512mb).
@@ -2313,6 +2322,14 @@ bool PhysicalHeap::TriggerCallbacks(std::unique_lock<std::recursive_mutex> globa
   }
 
   return true;
+}
+
+std::unique_lock<std::recursive_mutex> PhysicalHeap::AcquireHostPageReconcileLock() const {
+  auto lock = BaseHeap::AcquireHostPageReconcileLock();
+  if (!lock.owns_lock() && parent_heap_ && parent_heap_->page_size() < memory_->system_page_size_) {
+    lock = rex::thread::global_critical_region::AcquireDirect();
+  }
+  return lock;
 }
 
 bool PhysicalHeap::IsHostPageWriteWatched(uint32_t host_page_number) const {

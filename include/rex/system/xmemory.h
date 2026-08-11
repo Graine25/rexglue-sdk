@@ -246,7 +246,7 @@ class BaseHeap {
   //
   // Returns an empty (unlocked) guard when guest pages are at least host page
   // sized, since no reconcile happens then and the lock would be pure cost.
-  std::unique_lock<std::recursive_mutex> AcquireHostPageReconcileLock() const;
+  virtual std::unique_lock<std::recursive_mutex> AcquireHostPageReconcileLock() const;
 
   // Whether a host page is currently write-watched for guest invalidation.
   // SyncHostPageAccess must not restore write access to such a page: the watch
@@ -324,6 +324,12 @@ class PhysicalHeap : public BaseHeap {
 
  protected:
   bool IsHostPageWriteWatched(uint32_t host_page_number) const override;
+
+  // Allocation on these heaps delegates to parent_heap_, whose own reconcile
+  // pass takes the global critical region. Acquire whenever this heap or its
+  // parent will need it, so the ordering holds even for a heap whose own guest
+  // pages are large enough to skip reconciling but whose parent's are not.
+  std::unique_lock<std::recursive_mutex> AcquireHostPageReconcileLock() const override;
 
   VirtualHeap* parent_heap_;
 
