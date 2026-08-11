@@ -29,6 +29,7 @@
 #include <rex/audio/sdl/sdl_audio_system.h>
 #include <rex/input/input_system.h>
 #include <rex/kernel/init.h>
+#include <rex/string/numeric.h>
 #include <rex/system.h>
 #include <rex/system/achievement_manager.h>
 #include <rex/system/gpu_plugin.h>
