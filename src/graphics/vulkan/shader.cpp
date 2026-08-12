@@ -34,7 +34,8 @@ namespace {
 // Purely diagnostic - the binary is handed to the driver either way, so a
 // validator stricter than the driver can't break a working configuration.
 void ValidateTranslatedSpirv(const uint8_t* data, size_t size_bytes, uint64_t ucode_data_hash,
-                             uint64_t modification) {
+                             uint64_t modification, bool uniform_buffer_standard_layout,
+                             bool scalar_block_layout) {
   if (size_bytes < sizeof(uint32_t) || (size_bytes % sizeof(uint32_t)) != 0) {
     REXGPU_ERROR("Translated SPIR-V for shader {:016X} modification {:016X} has a size of {} bytes",
                  ucode_data_hash, modification, size_bytes);
@@ -51,8 +52,11 @@ void ValidateTranslatedSpirv(const uint8_t* data, size_t size_bytes, uint64_t uc
           diagnostic += message;
         }
       });
+  spvtools::ValidatorOptions validator_options;
+  validator_options.SetUniformBufferStandardLayout(uniform_buffer_standard_layout);
+  validator_options.SetScalarBlockLayout(scalar_block_layout);
   if (!spirv_tools.Validate(reinterpret_cast<const uint32_t*>(data),
-                            size_bytes / sizeof(uint32_t))) {
+                            size_bytes / sizeof(uint32_t), validator_options)) {
     REXGPU_ERROR("Invalid translated SPIR-V for shader {:016X} modification {:016X}: {}",
                  ucode_data_hash, modification, diagnostic);
   }
@@ -85,8 +89,10 @@ VkShaderModule VulkanShader::VulkanTranslation::GetOrCreateShaderModule() {
   shader_module_create_info.codeSize = translated_binary().size();
   shader_module_create_info.pCode = reinterpret_cast<const uint32_t*>(translated_binary().data());
   if (REXCVAR_GET(vulkan_validate_translated_spirv)) {
+    const ui::vulkan::VulkanDevice::Properties& properties = vulkan_device->properties();
     ValidateTranslatedSpirv(translated_binary().data(), translated_binary().size(),
-                            shader().ucode_data_hash(), modification());
+                            shader().ucode_data_hash(), modification(),
+                            properties.uniformBufferStandardLayout, properties.scalarBlockLayout);
   }
   if (vulkan_device->functions().vkCreateShaderModule(vulkan_device->device(),
                                                       &shader_module_create_info, nullptr,

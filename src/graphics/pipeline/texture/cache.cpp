@@ -148,6 +148,8 @@ const TextureCache::LoadShaderInfo TextureCache::load_shader_info_[kLoadShaderCo
     {4, 4, 2, 4},
     // kRGBA4ToARGB4
     {4, 4, 2, 4},
+    // kRGBA4ToRGBA8
+    {4, 4, 4, 4},
     // kGBGR8ToGRGB8
     {4, 4, 4, 3},
     // kGBGR8ToRGB8
