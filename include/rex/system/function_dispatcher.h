@@ -67,6 +67,15 @@ class FunctionDispatcher : public IModuleRegistrar {
   uint64_t ExecuteInterrupt(ThreadState* thread_state, uint32_t address, uint64_t args[],
                             size_t arg_count);
 
+  /**
+   * Executes guest code on a thread that is already running guest code, then
+   * restores its full register state. The 360 kernel delivers APCs through a
+   * trap frame, so the interrupted thread observes no register change even if
+   * the dispatched routine ignores the ABI.
+   */
+  uint64_t ExecuteTrap(ThreadState* thread_state, uint32_t address, uint64_t args[],
+                       size_t arg_count);
+
   // Shared thunk region size per module.
   static constexpr uint32_t kThunkReserveSize = 0x10000;  // 64KB
 
