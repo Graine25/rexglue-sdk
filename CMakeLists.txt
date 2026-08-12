@@ -140,6 +140,12 @@ add_compile_options(
     -fno-char8_t
 )
 
+if(APPLE)
+    # Apple's libc++ still gates std::jthread/std::stop_token behind the
+    # experimental-library feature flag.
+    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-fexperimental-library>)
+endif()
+
 # Platform detection (supports AMD64 and ARM64)
 set(REX_TARGET_PROCESSOR "${CMAKE_SYSTEM_PROCESSOR}")
 if(APPLE AND CMAKE_OSX_ARCHITECTURES)

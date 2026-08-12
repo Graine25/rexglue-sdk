@@ -149,6 +149,8 @@ if(REXGLUE_USE_VULKAN)
         OSDependent
         OGLCompiler
     )
+    # Optional validation of translated SPIR-V (vulkan/shader.cpp).
+    target_link_libraries(rexgpu-xenos PRIVATE SPIRV-Tools)
 endif()
 
 if(REXGLUE_USE_D3D12)
