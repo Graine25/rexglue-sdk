@@ -135,7 +135,7 @@ uint64_t FunctionDispatcher::ExecuteTrap(ThreadState* thread_state, uint32_t add
   uint64_t result = Execute(thread_state, address, args, arg_count);
 
   *ctx = saved;
-  ctx->fpscr.setcsr(ctx->fpscr.csr);
+  ctx->fpscr.restoreGuestBits(saved.fpscr.csr);
   return result;
 }
 

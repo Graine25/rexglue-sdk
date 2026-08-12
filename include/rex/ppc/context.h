@@ -154,8 +154,17 @@ struct FPSCRRegister {
   static constexpr size_t RoundMaskVal = Platform::RoundMaskVal;
   static constexpr size_t FlushMask = Platform::FlushMask;
 
+  // Bits the guest owns; the rest is host policy seeded by InitHost.
+  static constexpr uint32_t GuestMask = uint32_t(RoundMaskVal) | uint32_t(FlushMask);
+
   inline uint32_t getcsr() noexcept { return Platform::getcsr(); }
   inline void setcsr(uint32_t csr) noexcept { Platform::setcsr(csr); }
+
+  // Restoring the whole word would unmask every FP exception when csr is 0.
+  inline void restoreGuestBits(uint32_t saved) noexcept {
+    csr = (getcsr() & ~GuestMask) | (saved & GuestMask);
+    setcsr(csr);
+  }
 
   inline uint32_t loadFromHost() noexcept {
     csr = getcsr();
@@ -434,7 +443,6 @@ struct alignas(0x40) PPCContext {
   //--- Non-volatile register save/restore --------
   // Layout: r14-r31 (144) | f14-f31 (144) | v14-v31 (288) | v64-v127 (1024)
   //       | cr2-cr4 (12) | fpscr (4).  Total: 1616 bytes.
-  // Buffer must be at least this large.
   static constexpr size_t kNonVolatileSaveSize =
       18 * sizeof(PPCRegister) + 18 * sizeof(PPCRegister) + 18 * sizeof(PPCVRegister) +
       64 * sizeof(PPCVRegister) + 3 * sizeof(PPCCRRegister) + sizeof(PPCFPSCRRegister);
@@ -464,9 +472,8 @@ struct alignas(0x40) PPCContext {
     src += 64 * sizeof(PPCVRegister);
     std::memcpy(&cr2, src, 3 * sizeof(PPCCRRegister));
     src += 3 * sizeof(PPCCRRegister);
-    std::memcpy(&fpscr, src, sizeof(PPCFPSCRRegister));
-    // csr shadows the host control register; re-sync so the flush-mode fast
-    // paths do not skip a needed setcsr.
-    fpscr.setcsr(fpscr.csr);
+    PPCFPSCRRegister saved_fpscr;
+    std::memcpy(&saved_fpscr, src, sizeof(PPCFPSCRRegister));
+    fpscr.restoreGuestBits(saved_fpscr.csr);
   }
 };

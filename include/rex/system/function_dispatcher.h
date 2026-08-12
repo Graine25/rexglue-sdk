@@ -68,10 +68,8 @@ class FunctionDispatcher : public IModuleRegistrar {
                             size_t arg_count);
 
   /**
-   * Executes guest code on a thread that is already running guest code, then
-   * restores its full register state. The 360 kernel delivers APCs through a
-   * trap frame, so the interrupted thread observes no register change even if
-   * the dispatched routine ignores the ABI.
+   * Executes guest code on a thread already running guest code, then restores
+   * its full register state, matching the 360 kernel's trap-frame APC delivery.
    */
   uint64_t ExecuteTrap(ThreadState* thread_state, uint32_t address, uint64_t args[],
                        size_t arg_count);

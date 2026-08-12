@@ -272,3 +272,16 @@ TEST_CASE("PPCContext: non-volatile save area round-trips cr2-cr4 and fpscr",
   CHECK(ctx.fpscr.csr == saved_csr);
   CHECK(ctx.fpscr.getcsr() == saved_csr);
 }
+
+TEST_CASE("PPCContext: restoring a zeroed fpscr leaves host FP exception masks intact",
+          "[runtime][context]") {
+  PPCContext ctx{};
+  const uint32_t host_before = ctx.fpscr.getcsr();
+
+  uint8_t area[PPCContext::kNonVolatileSaveSize] = {};
+  ctx.RestoreNonVolatiles(area);
+
+  constexpr uint32_t kGuestMask = PPCFPSCRRegister::GuestMask;
+  CHECK((ctx.fpscr.getcsr() & ~kGuestMask) == (host_before & ~kGuestMask));
+  CHECK(ctx.fpscr.csr == ctx.fpscr.getcsr());
+}
