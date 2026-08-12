@@ -433,10 +433,11 @@ struct alignas(0x40) PPCContext {
 
   //--- Non-volatile register save/restore --------
   // Layout: r14-r31 (144) | f14-f31 (144) | v14-v31 (288) | v64-v127 (1024)
-  // Total: 1600 bytes.  Buffer must be at least this large.
+  //       | cr2-cr4 (12) | fpscr (4).  Total: 1616 bytes.
+  // Buffer must be at least this large.
   static constexpr size_t kNonVolatileSaveSize =
       18 * sizeof(PPCRegister) + 18 * sizeof(PPCRegister) + 18 * sizeof(PPCVRegister) +
-      64 * sizeof(PPCVRegister);
+      64 * sizeof(PPCVRegister) + 3 * sizeof(PPCCRRegister) + sizeof(PPCFPSCRRegister);
 
   inline void SaveNonVolatiles(uint8_t* dst) const {
     std::memcpy(dst, &r14, 18 * sizeof(PPCRegister));
@@ -446,6 +447,10 @@ struct alignas(0x40) PPCContext {
     std::memcpy(dst, &v14, 18 * sizeof(PPCVRegister));
     dst += 18 * sizeof(PPCVRegister);
     std::memcpy(dst, &v64, 64 * sizeof(PPCVRegister));
+    dst += 64 * sizeof(PPCVRegister);
+    std::memcpy(dst, &cr2, 3 * sizeof(PPCCRRegister));
+    dst += 3 * sizeof(PPCCRRegister);
+    std::memcpy(dst, &fpscr, sizeof(PPCFPSCRRegister));
   }
 
   inline void RestoreNonVolatiles(const uint8_t* src) {
@@ -456,5 +461,12 @@ struct alignas(0x40) PPCContext {
     std::memcpy(&v14, src, 18 * sizeof(PPCVRegister));
     src += 18 * sizeof(PPCVRegister);
     std::memcpy(&v64, src, 64 * sizeof(PPCVRegister));
+    src += 64 * sizeof(PPCVRegister);
+    std::memcpy(&cr2, src, 3 * sizeof(PPCCRRegister));
+    src += 3 * sizeof(PPCCRRegister);
+    std::memcpy(&fpscr, src, sizeof(PPCFPSCRRegister));
+    // csr shadows the host control register; re-sync so the flush-mode fast
+    // paths do not skip a needed setcsr.
+    fpscr.setcsr(fpscr.csr);
   }
 };
