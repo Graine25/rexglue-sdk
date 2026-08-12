@@ -10,13 +10,55 @@
  */
 
 #include <cstdint>
+#include <string>
+#include <vector>
+
+#include <spirv-tools/libspirv.hpp>
 
 #include <rex/assert.h>
+#include <rex/cvar.h>
 #include <rex/graphics/vulkan/shader.h>
 #include <rex/logging.h>
+#include <rex/platform.h>
 #include <rex/ui/vulkan/provider.h>
 
+REXCVAR_DEFINE_BOOL(vulkan_validate_translated_spirv, false, "GPU/Vulkan",
+                    "Run the SPIR-V validator on every translated shader before creating a shader "
+                    "module, and log the diagnostic if it fails. Invalid SPIR-V is often silently "
+                    "accepted by desktop drivers but rejected or miscompiled by MoltenVK.");
+
 namespace rex::graphics::vulkan {
+
+namespace {
+
+// Purely diagnostic - the binary is handed to the driver either way, so a
+// validator stricter than the driver can't break a working configuration.
+void ValidateTranslatedSpirv(const uint8_t* data, size_t size_bytes, uint64_t ucode_data_hash,
+                             uint64_t modification) {
+  if (size_bytes < sizeof(uint32_t) || (size_bytes % sizeof(uint32_t)) != 0) {
+    REXGPU_ERROR("Translated SPIR-V for shader {:016X} modification {:016X} has a size of {} bytes",
+                 ucode_data_hash, modification, size_bytes);
+    return;
+  }
+  spvtools::SpirvTools spirv_tools(SPV_ENV_VULKAN_1_2);
+  std::string diagnostic;
+  spirv_tools.SetMessageConsumer(
+      [&diagnostic](spv_message_level_t, const char*, const spv_position_t&, const char* message) {
+        if (message) {
+          if (!diagnostic.empty()) {
+            diagnostic += "; ";
+          }
+          diagnostic += message;
+        }
+      });
+  if (!spirv_tools.Validate(reinterpret_cast<const uint32_t*>(data),
+                            size_bytes / sizeof(uint32_t))) {
+    REXGPU_ERROR("Invalid translated SPIR-V for shader {:016X} modification {:016X}: {}",
+                 ucode_data_hash, modification, diagnostic);
+  }
+}
+
+}  // namespace
 
 VulkanShader::VulkanTranslation::~VulkanTranslation() {
   if (shader_module_) {
@@ -42,6 +84,10 @@ VkShaderModule VulkanShader::VulkanTranslation::GetOrCreateShaderModule() {
   shader_module_create_info.flags = 0;
   shader_module_create_info.codeSize = translated_binary().size();
   shader_module_create_info.pCode = reinterpret_cast<const uint32_t*>(translated_binary().data());
+  if (REXCVAR_GET(vulkan_validate_translated_spirv)) {
+    ValidateTranslatedSpirv(translated_binary().data(), translated_binary().size(),
+                            shader().ucode_data_hash(), modification());
+  }
   if (vulkan_device->functions().vkCreateShaderModule(vulkan_device->device(),
                                                       &shader_module_create_info, nullptr,
                                                       &shader_module_) != VK_SUCCESS) {
