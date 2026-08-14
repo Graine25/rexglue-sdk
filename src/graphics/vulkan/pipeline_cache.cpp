@@ -3249,6 +3249,14 @@ bool VulkanPipelineCache::EnsurePipelineCreated(const PipelineCreationArguments&
   if (description.cull_back) {
     rasterization_state.cullMode |= VK_CULL_MODE_BACK_BIT;
   }
+#if REX_PLATFORM_MAC
+  // MoltenVK's front-face classification is inconsistent across the guest's
+  // 2D and 3D pipelines on legacy AMD Metal devices. Preserve correctness by
+  // rasterizing both faces; depth testing still rejects hidden geometry.
+  if (vulkan_device->properties().vendorID == 0x1002) {
+    rasterization_state.cullMode = VK_CULL_MODE_NONE;
+  }
+#endif  // REX_PLATFORM_MAC
   rasterization_state.frontFace =
       description.front_face_clockwise ? VK_FRONT_FACE_CLOCKWISE : VK_FRONT_FACE_COUNTER_CLOCKWISE;
   // Depth bias is dynamic (even toggling - pipeline creation is expensive).
