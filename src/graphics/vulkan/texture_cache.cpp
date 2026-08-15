@@ -78,6 +78,7 @@ namespace shaders {
 #include "../shaders/vulkan_spirv/texture_load_r4g4b4a4_a4r4g4b4_cs.h"
 #include "../shaders/vulkan_spirv/texture_load_r4g4b4a4_a4r4g4b4_scaled_cs.h"
 #include "../shaders/vulkan_spirv/texture_load_r4g4b4a4_rgba8_cs.h"
+#include "../shaders/vulkan_spirv/texture_load_r4g4b4a4_rgba8_scaled_cs.h"
 #include "../shaders/vulkan_spirv/texture_load_r5g5b5a1_b5g5r5a1_cs.h"
 #include "../shaders/vulkan_spirv/texture_load_r5g5b5a1_b5g5r5a1_scaled_cs.h"
 #include "../shaders/vulkan_spirv/texture_load_r5g5b6_b5g6r5_swizzle_rbga_cs.h"
@@ -2879,6 +2880,9 @@ bool VulkanTextureCache::Initialize() {
     load_shader_code_scaled[kLoadShaderIndexRGBA4ToARGB4] =
         std::make_pair(shaders::texture_load_r4g4b4a4_a4r4g4b4_scaled_cs,
                        sizeof(shaders::texture_load_r4g4b4a4_a4r4g4b4_scaled_cs));
+    load_shader_code_scaled[kLoadShaderIndexRGBA4ToRGBA8] =
+        std::make_pair(shaders::texture_load_r4g4b4a4_rgba8_scaled_cs,
+                       sizeof(shaders::texture_load_r4g4b4a4_rgba8_scaled_cs));
     load_shader_code_scaled[kLoadShaderIndexR10G11B11ToRGBA16] =
         std::make_pair(shaders::texture_load_r10g11b11_rgba16_scaled_cs,
                        sizeof(shaders::texture_load_r10g11b11_rgba16_scaled_cs));
