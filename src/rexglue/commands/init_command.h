@@ -40,7 +40,7 @@ struct InitModuleOptions {
 };
 
 struct InitAchievementsOptions {
-  std::string xex_path;
+  std::string manifest_path;
   std::string output_dir;
   // XLanguage ID to extract strings for; defaults to English (1) when unset.
   uint32_t language = 1;

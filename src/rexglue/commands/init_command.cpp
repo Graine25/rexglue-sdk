@@ -90,9 +90,7 @@ Result<void> InitProject(const InitOptions& opts, const CliContext& ctx) {
   (void)ctx;
 
   if (opts.project_name.empty())
-    return Err<void>(ErrorCategory::Config, "--project_name is required");
-  if (opts.xex_path.empty())
-    return Err<void>(ErrorCategory::Config, "--xex_path is required (path to entrypoint XEX)");
+    return Err<void>(ErrorCategory::Config, "--project-name is required");
 
   std::string validation_error;
   if (!validate_app_name(opts.project_name, validation_error))
@@ -105,18 +103,35 @@ Result<void> InitProject(const InitOptions& opts, const CliContext& ctx) {
   if (ec)
     return Err<void>(ErrorCategory::IO, "Failed to resolve project root: " + ec.message());
 
-  fs::path xexAbs = ResolveDir(opts.xex_path, ec);
-  if (ec)
+  const bool xex_defaulted = opts.xex_path.empty();
+  fs::path xexAbs;
+  if (xex_defaulted) {
+    xexAbs = projectRoot / "assets" / "default.xex";
+    fs::path canon = fs::weakly_canonical(xexAbs, ec);
+    if (!ec)
+      xexAbs = canon;
+    ec.clear();
+  } else {
+    xexAbs = ResolveDir(opts.xex_path, ec);
+    if (ec)
+      return Err<void>(ErrorCategory::IO,
+                       "Failed to resolve --xex-path '" + opts.xex_path + "': " + ec.message());
+  }
+  const bool xex_present = fs::exists(xexAbs);
+  if (!xex_defaulted) {
+    if (!xex_present)
+      return Err<void>(ErrorCategory::IO, "Entrypoint XEX not found: " + xexAbs.string());
+    if (!fs::is_regular_file(xexAbs))
+      return Err<void>(ErrorCategory::IO, "--xex-path is not a regular file: " + xexAbs.string());
+  } else if (xex_present && !fs::is_regular_file(xexAbs)) {
     return Err<void>(ErrorCategory::IO,
-                     "Failed to resolve --xex_path '" + opts.xex_path + "': " + ec.message());
-  if (!fs::exists(xexAbs))
-    return Err<void>(ErrorCategory::IO, "Entrypoint XEX not found: " + xexAbs.string());
-  if (!fs::is_regular_file(xexAbs))
-    return Err<void>(ErrorCategory::IO, "--xex_path is not a regular file: " + xexAbs.string());
+                     "Default entrypoint path exists but is not a regular file: " +
+                         xexAbs.string());
+  }
 
   std::string xexStem = xexAbs.stem().string();
   if (xexStem.empty())
-    return Err<void>(ErrorCategory::Config, "--xex_path has no filename: " + opts.xex_path);
+    return Err<void>(ErrorCategory::Config, "--xex-path has no filename: " + opts.xex_path);
 
   fs::path gameRootAbs;
   if (opts.game_root.empty()) {
@@ -125,16 +140,20 @@ Result<void> InitProject(const InitOptions& opts, const CliContext& ctx) {
     gameRootAbs = ResolveDir(opts.game_root, ec);
     if (ec)
       return Err<void>(ErrorCategory::IO,
-                       "Failed to resolve --game_root '" + opts.game_root + "': " + ec.message());
+                       "Failed to resolve --game-root '" + opts.game_root + "': " + ec.message());
   }
-  if (!fs::exists(gameRootAbs) || !fs::is_directory(gameRootAbs))
-    return Err<void>(ErrorCategory::IO, "--game_root is not a directory: " + gameRootAbs.string());
+  // The default game root (assets/) is created during scaffolding when the
+  // defaulted entrypoint does not exist yet; an explicit --game-root must.
+  const bool scaffold_game_root = xex_defaulted && !xex_present && opts.game_root.empty();
+  if (!scaffold_game_root && (!fs::exists(gameRootAbs) || !fs::is_directory(gameRootAbs)))
+    return Err<void>(ErrorCategory::IO, "--game-root is not a directory: " + gameRootAbs.string());
 
   fs::path xexRelToGame = fs::relative(xexAbs, gameRootAbs, ec);
   if (ec || xexRelToGame.empty() || *xexRelToGame.begin() == fs::path("..")) {
-    return Err<void>(ErrorCategory::Config, "--xex_path (" + xexAbs.string() +
-                                                ") is not inside --game_root (" +
-                                                gameRootAbs.string() + ")");
+    return Err<void>(ErrorCategory::Config, "Entrypoint XEX (" + xexAbs.string() +
+                                                ") is not inside the game root (" +
+                                                gameRootAbs.string() +
+                                                "); pass --xex-path for a custom layout");
   }
 
   std::string outDir = LowercaseAscii("generated/" + xexStem);
@@ -142,7 +161,9 @@ Result<void> InitProject(const InitOptions& opts, const CliContext& ctx) {
   std::string gameRootRelManifest = ManifestPath(gameRootAbs, projectRoot);
 
   nlohmann::json modulesJson = nlohmann::json::array();
-  if (opts.scan_dlls) {
+  if (opts.scan_dlls && scaffold_game_root) {
+    REXLOG_WARN("--scan-dll skipped: game root '{}' does not exist yet", gameRootAbs.string());
+  } else if (opts.scan_dlls) {
     std::vector<fs::path> dllPaths;
     fs::recursive_directory_iterator it(gameRootAbs, fs::directory_options::skip_permission_denied,
                                         ec);
@@ -192,7 +213,8 @@ Result<void> InitProject(const InitOptions& opts, const CliContext& ctx) {
   std::vector<ui::KeyValueRow> header_rows;
   header_rows.push_back({"Project", names.snake_case});
   header_rows.push_back({"Root", projectRoot.string()});
-  header_rows.push_back({"Entrypoint", xexRelManifest});
+  header_rows.push_back(
+      {"Entrypoint", xex_present ? xexRelManifest : xexRelManifest + " (not found yet)"});
   header_rows.push_back({"Game root", gameRootRelManifest});
   if (opts.scan_dlls) {
     header_rows.push_back({"DLL modules", std::to_string(modulesJson.size())});
@@ -239,7 +261,10 @@ Result<void> InitProject(const InitOptions& opts, const CliContext& ctx) {
   }
 
   REXLOG_TRACE("Creating directory structure...");
-  for (const auto& dir : {projectRoot, projectRoot / "src", projectRoot / "generated"}) {
+  std::vector<fs::path> dirs = {projectRoot, projectRoot / "src", projectRoot / "generated"};
+  if (scaffold_game_root)
+    dirs.push_back(gameRootAbs);
+  for (const auto& dir : dirs) {
     fs::create_directories(dir, ec);
     if (ec) {
       return Err<void>(ErrorCategory::IO,
@@ -258,6 +283,10 @@ Result<void> InitProject(const InitOptions& opts, const CliContext& ctx) {
       return Err<void>(ErrorCategory::IO, "Failed to write " + r.out.string());
     }
     REXLOG_DEBUG("  Created {}", fs::relative(r.out, projectRoot).generic_string());
+  }
+  if (xex_defaulted && !xex_present) {
+    REXLOG_WARN("Entrypoint XEX set to default path '{}'. Insert XEX file before building.",
+                xexRelManifest);
   }
   return Ok();
 }
@@ -364,9 +393,32 @@ Result<void> InitModule(const InitModuleOptions& opts, const CliContext& ctx) {
 
 Result<void> InitAchievements(const InitAchievementsOptions& opts, const CliContext& /*ctx*/) {
   std::error_code ec;
-  fs::path xexPath = fs::absolute(opts.xex_path, ec);
-  if (ec || !fs::exists(xexPath)) {
-    return Err<void>(ErrorCategory::IO, "XEX not found: " + opts.xex_path);
+  fs::path manifestPath = fs::absolute(opts.manifest_path, ec);
+  if (ec || !fs::exists(manifestPath) || !fs::is_regular_file(manifestPath)) {
+    return Err<void>(ErrorCategory::IO, "Manifest not found: " + opts.manifest_path);
+  }
+  if (!rex::codegen::ManifestConfig::IsManifest(manifestPath)) {
+    return Err<void>(ErrorCategory::Config,
+                     "Not a project manifest (missing [project] section): " +
+                         manifestPath.string());
+  }
+  auto manifest = rex::codegen::ManifestConfig::Load(manifestPath);
+  if (!manifest) {
+    return Err<void>(ErrorCategory::Config, "Failed to load manifest: " + manifestPath.string());
+  }
+  if (manifest->entrypoint.recompiler.filePath.empty()) {
+    return Err<void>(ErrorCategory::Config,
+                     "Manifest has no [entrypoint] file_path: " + manifestPath.string());
+  }
+
+  // Manifest paths are relative to the manifest's directory.
+  fs::path xexPath =
+      fs::weakly_canonical(manifest->manifestDir / manifest->entrypoint.recompiler.filePath, ec);
+  ec.clear();
+  if (!fs::exists(xexPath)) {
+    return Err<void>(ErrorCategory::IO,
+                     fmt::format("Entrypoint XEX not found: {} (from manifest {})",
+                                 xexPath.string(), manifestPath.string()));
   }
   xexPath = fs::canonical(xexPath, ec);
 
@@ -377,10 +429,20 @@ Result<void> InitAchievements(const InitAchievementsOptions& opts, const CliCont
     return Err<void>(ErrorCategory::IO, "Cannot create output directory: " + outDir.string());
   }
 
-  // Build VFS path: game:\ maps to the XEX's parent directory.
-  fs::path gameRoot = xexPath.parent_path();
-  fs::path entryRel = xexPath.filename();
-  std::string entryRelStr = entryRel.string();
+  // Build VFS path: game:\ maps to the manifest's game root (or the XEX's
+  // parent directory when the manifest does not record one).
+  fs::path gameRoot = manifest->gameRoot
+                          ? fs::weakly_canonical(manifest->manifestDir / *manifest->gameRoot, ec)
+                          : xexPath.parent_path();
+  ec.clear();
+  fs::path entryRel = fs::relative(xexPath, gameRoot, ec);
+  if (ec || entryRel.empty() || *entryRel.begin() == fs::path("..")) {
+    return Err<void>(ErrorCategory::Config,
+                     fmt::format("Entrypoint XEX ({}) is not inside the manifest game root ({})",
+                                 xexPath.string(), gameRoot.string()));
+  }
+  std::string entryRelStr = entryRel.generic_string();
+  std::replace(entryRelStr.begin(), entryRelStr.end(), '/', '\\');
   auto entryVfsPath = "game:\\" + entryRelStr;
 
   auto runtime = std::make_unique<rex::Runtime>(gameRoot.string());
@@ -395,7 +457,7 @@ Result<void> InitAchievements(const InitAchievementsOptions& opts, const CliCont
   rtStatus = runtime->LoadXexImage(entryVfsPath);
   if (!XSUCCEEDED(rtStatus)) {
     return Err<void>(ErrorCategory::IO,
-                     fmt::format("Failed to load XEX '{}': {:#x}", opts.xex_path, rtStatus));
+                     fmt::format("Failed to load XEX '{}': {:#x}", xexPath.string(), rtStatus));
   }
 
   const rex::system::util::XdbfGameData db = runtime->kernel_state()->title_xdbf();
@@ -553,7 +615,7 @@ struct InitModuleArgs {
 };
 
 struct InitAchievementsArgs {
-  std::string xex_path;
+  std::string manifest_path;
   std::string output_dir;
   uint32_t language = static_cast<uint32_t>(rex::system::XLanguage::kEnglish);
 };
@@ -565,11 +627,9 @@ void RegisterInit(CLI::App& parent, const CliContext& ctx, DeferredAction& pendi
   auto args = std::make_shared<InitArgs>();
   init->add_option("--project-name", args->project_name,
                    "Project name (becomes [project].name in the manifest)")
-      ->type_name("NAME")
-      ->required();
+      ->type_name("NAME");
   init->add_option("--xex-path", args->xex_path, "Path to entrypoint XEX (e.g. assets/Default.xex)")
-      ->type_name("PATH")
-      ->required();
+      ->type_name("PATH");
   init->add_option("--game-root", args->game_root, "Game asset root for DLL guest-path derivation")
       ->type_name("PATH");
   init->add_option("--project-root", args->project_root,
@@ -618,10 +678,14 @@ void RegisterInit(CLI::App& parent, const CliContext& ctx, DeferredAction& pendi
     };
   });
 
-  auto* ach = init->add_subcommand("achievements", "Extract achievement metadata from XEX to TOML")
+  auto* ach = init->add_subcommand("achievements",
+                                   "Extract achievement metadata from the project's entrypoint "
+                                   "XEX to TOML")
                   ->fallthrough();
   auto achArgs = std::make_shared<InitAchievementsArgs>();
-  ach->add_option("xex_path", achArgs->xex_path, "Path to the XEX binary")->required();
+  ach->add_option("manifest", achArgs->manifest_path,
+                  "Path to the project manifest TOML (its [entrypoint] locates the XEX)")
+      ->required();
   ach->add_option("output_dir", achArgs->output_dir,
                   "Output directory for achievements.toml (default: XEX directory)");
   ach->add_option("--language", achArgs->language,
@@ -631,7 +695,7 @@ void RegisterInit(CLI::App& parent, const CliContext& ctx, DeferredAction& pendi
   ach->callback([achArgs, &ctx, &pending]() {
     pending = [achArgs, &ctx]() -> Result<void> {
       InitAchievementsOptions opts;
-      opts.xex_path = achArgs->xex_path;
+      opts.manifest_path = achArgs->manifest_path;
       opts.output_dir = achArgs->output_dir;
       opts.language = achArgs->language;
       return InitAchievements(opts, ctx);
