@@ -138,49 +138,6 @@ struct CodegenArgs {
 
 }  // namespace
 
-Result<std::string> DiscoverManifestInCwd() {
-  std::error_code ec;
-  fs::path cwd = fs::current_path(ec);
-  if (ec) {
-    return Err<std::string>(rex::ErrorCategory::IO,
-                            fmt::format("Cannot read current directory: {}", ec.message()));
-  }
-
-  std::vector<fs::path> manifests;
-  std::vector<fs::path> other_tomls;
-  for (const auto& entry : fs::directory_iterator(cwd, ec)) {
-    if (ec)
-      break;
-    if (!entry.is_regular_file())
-      continue;
-    if (entry.path().extension() != ".toml")
-      continue;
-    auto stem = entry.path().stem().string();
-    if (stem.size() >= 9 && std::string_view{stem}.substr(stem.size() - 9) == "_manifest") {
-      manifests.push_back(entry.path());
-    } else {
-      other_tomls.push_back(entry.path());
-    }
-  }
-
-  if (manifests.size() == 1)
-    return rex::Ok(manifests.front().string());
-  if (manifests.size() > 1) {
-    return Err<std::string>(
-        rex::ErrorCategory::Config,
-        fmt::format("Multiple *_manifest.toml files in {}; pass one explicitly", cwd.string()));
-  }
-  if (other_tomls.size() == 1)
-    return rex::Ok(other_tomls.front().string());
-  if (other_tomls.size() > 1) {
-    return Err<std::string>(
-        rex::ErrorCategory::Config,
-        fmt::format("Multiple .toml files in {}; pass the manifest explicitly", cwd.string()));
-  }
-  return Err<std::string>(rex::ErrorCategory::Config,
-                          fmt::format("No manifest .toml found in {}", cwd.string()));
-}
-
 Result<void> CodegenFromConfig(const std::string& config_path, const CliContext& ctx,
                                const std::vector<std::string>& targets, bool ignore_stamp) {
   REXLOG_TRACE("Generating code with config: {}", config_path);

@@ -11,12 +11,16 @@
 #include "template_utils.h"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <memory>
 #include <sstream>
+#include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 #include <rex/codegen/manifest.h>
@@ -84,6 +88,220 @@ fs::path ResolveDir(const std::string& raw, std::error_code& ec) {
   return canon;
 }
 
+std::string BinaryConfigRel(const std::string& stem) {
+  return "config/" + stem + ".toml";
+}
+
+std::string TrimAscii(std::string_view s) {
+  const auto is_space = [](unsigned char c) { return std::isspace(c) != 0; };
+  while (!s.empty() && is_space(static_cast<unsigned char>(s.front())))
+    s.remove_prefix(1);
+  while (!s.empty() && is_space(static_cast<unsigned char>(s.back())))
+    s.remove_suffix(1);
+  return std::string(s);
+}
+
+std::vector<std::string> SplitLines(const std::string& content) {
+  std::vector<std::string> lines;
+  std::size_t start = 0;
+  while (start <= content.size()) {
+    std::size_t nl = content.find('\n', start);
+    if (nl == std::string::npos) {
+      lines.push_back(content.substr(start));
+      break;
+    }
+    lines.push_back(content.substr(start, nl - start));
+    start = nl + 1;
+  }
+  return lines;
+}
+
+std::string JoinLines(const std::vector<std::string>& lines) {
+  std::string out;
+  for (std::size_t i = 0; i < lines.size(); ++i) {
+    out += lines[i];
+    if (i + 1 < lines.size())
+      out.push_back('\n');
+  }
+  return out;
+}
+
+// Quoted entries of a single-line TOML string array. The manifest only ever
+// holds generated config paths here, so escapes are not a concern.
+std::vector<std::string> ParseInlineStringArray(std::string_view value) {
+  std::vector<std::string> out;
+  std::size_t i = 0;
+  while ((i = value.find('"', i)) != std::string_view::npos) {
+    std::size_t j = value.find('"', i + 1);
+    if (j == std::string_view::npos)
+      break;
+    out.emplace_back(value.substr(i + 1, j - i - 1));
+    i = j + 1;
+  }
+  return out;
+}
+
+std::string FormatIncludes(const std::vector<std::string>& entries) {
+  std::string out = "[";
+  for (std::size_t i = 0; i < entries.size(); ++i) {
+    if (i > 0)
+      out += ", ";
+    out += "\"" + entries[i] + "\"";
+  }
+  out += "]";
+  return out;
+}
+
+// Section header lines partition the manifest; a section runs until the next
+// one. Returns [header_line, one_past_last_body_line).
+std::pair<std::size_t, std::size_t> SectionRange(const std::vector<std::string>& lines,
+                                                 std::size_t header_index) {
+  std::size_t end = header_index + 1;
+  while (end < lines.size() && !TrimAscii(lines[end]).starts_with("["))
+    ++end;
+  return {header_index, end};
+}
+
+// Add `entry` to the includes array between [begin, end), rewriting the
+// existing key in place. Already-present entries are left alone, so repeating
+// a command never duplicates a wiring. Returns true when a line changed.
+bool EnsureIncludesInRange(std::vector<std::string>& lines, std::size_t begin, std::size_t end,
+                           const std::string& entry) {
+  for (std::size_t i = begin; i < end && i < lines.size(); ++i) {
+    const std::string trimmed = TrimAscii(lines[i]);
+    const std::size_t eq = trimmed.find('=');
+    if (eq == std::string::npos || TrimAscii(trimmed.substr(0, eq)) != "includes")
+      continue;
+    const std::string value = TrimAscii(trimmed.substr(eq + 1));
+    if (value.find(']') == std::string::npos) {
+      REXLOG_WARN("Leaving multi-line includes array untouched; add '{}' by hand", entry);
+      return false;
+    }
+    std::vector<std::string> entries = ParseInlineStringArray(value);
+    if (std::find(entries.begin(), entries.end(), entry) != entries.end())
+      return false;
+    entries.push_back(entry);
+    lines[i] = "includes = " + FormatIncludes(entries);
+    return true;
+  }
+  lines.insert(lines.begin() + static_cast<std::ptrdiff_t>(begin) + 1,
+               "includes = " + FormatIncludes({entry}));
+  return true;
+}
+
+// Wire config/<stem>.toml into the [entrypoint] section.
+bool WireEntrypointConfig(std::string& content, const std::string& entry) {
+  std::vector<std::string> lines = SplitLines(content);
+  for (std::size_t i = 0; i < lines.size(); ++i) {
+    if (TrimAscii(lines[i]) != "[entrypoint]")
+      continue;
+    auto [begin, end] = SectionRange(lines, i);
+    if (!EnsureIncludesInRange(lines, begin, end, entry))
+      return false;
+    content = JoinLines(lines);
+    return true;
+  }
+  return false;
+}
+
+// Include resolution fails hard on a missing file, so a deleted config makes
+// the manifest unloadable - including by the command whose job is to create
+// configs. Restore blanks for the generated `config/` entries before loading.
+// Includes outside `config/` are left alone so a genuine typo still errors.
+Result<void> RestoreMissingConfigIncludes(const fs::path& manifest_path) {
+  toml::table tbl;
+  try {
+    tbl = toml::parse_file(manifest_path.string());
+  } catch (const toml::parse_error&) {
+    return Ok();  // Loading reports the parse error with better context.
+  }
+  const fs::path root = manifest_path.parent_path();
+
+  const auto restore = [&](const toml::table& section) -> Result<void> {
+    const auto* includes = section["includes"].as_array();
+    if (!includes)
+      return Ok();
+    for (const auto& item : *includes) {
+      const auto rel = item.value_or<std::string>("");
+      if (rel.empty() || !std::string_view{rel}.starts_with("config/"))
+        continue;
+      const fs::path abs = root / rel;
+      if (fs::exists(abs))
+        continue;
+      std::error_code ec;
+      fs::create_directories(abs.parent_path(), ec);
+      if (ec) {
+        return Err<void>(ErrorCategory::IO, fmt::format("Failed to create {}: {}",
+                                                        abs.parent_path().string(), ec.message()));
+      }
+      if (!write_file_atomic(abs, ""))
+        return Err<void>(ErrorCategory::IO, "Failed to write " + abs.string());
+      REXLOG_INFO("Restored missing config {}", rel);
+    }
+    return Ok();
+  };
+
+  if (const auto* entrypoint = tbl["entrypoint"].as_table()) {
+    if (auto r = restore(*entrypoint); !r)
+      return r;
+  }
+  if (const auto* modules = tbl["modules"].as_array()) {
+    for (const auto& mod : *modules) {
+      if (const auto* modTbl = mod.as_table()) {
+        if (auto r = restore(*modTbl); !r)
+          return r;
+      }
+    }
+  }
+  return Ok();
+}
+
+// Wire config/<stem>.toml into the [[modules]] block whose file_path matches.
+bool WireModuleConfig(std::string& content, const std::string& file_path,
+                      const std::string& entry) {
+  std::vector<std::string> lines = SplitLines(content);
+  for (std::size_t i = 0; i < lines.size(); ++i) {
+    if (TrimAscii(lines[i]) != "[[modules]]")
+      continue;
+    auto [begin, end] = SectionRange(lines, i);
+    bool matches = false;
+    for (std::size_t j = begin; j < end; ++j) {
+      const std::string trimmed = TrimAscii(lines[j]);
+      const std::size_t eq = trimmed.find('=');
+      if (eq == std::string::npos || TrimAscii(trimmed.substr(0, eq)) != "file_path")
+        continue;
+      auto values = ParseInlineStringArray(TrimAscii(trimmed.substr(eq + 1)));
+      matches = !values.empty() && values.front() == file_path;
+      break;
+    }
+    if (!matches)
+      continue;
+    if (!EnsureIncludesInRange(lines, begin, end, entry))
+      return false;
+    content = JoinLines(lines);
+    return true;
+  }
+  return false;
+}
+
+// Create a blank config/<stem>.toml when absent. Existing files are never
+// overwritten.
+Result<void> EnsureBinaryConfig(const fs::path& project_root, const std::string& stem) {
+  const fs::path abs = project_root / "config" / (stem + ".toml");
+  if (fs::exists(abs))
+    return Ok();
+  std::error_code ec;
+  fs::create_directories(abs.parent_path(), ec);
+  if (ec) {
+    return Err<void>(ErrorCategory::IO, fmt::format("Failed to create {}: {}",
+                                                    abs.parent_path().string(), ec.message()));
+  }
+  if (!write_file_atomic(abs, ""))
+    return Err<void>(ErrorCategory::IO, "Failed to write " + abs.string());
+  REXLOG_DEBUG("  Created {}", BinaryConfigRel(stem));
+  return Ok();
+}
+
 }  // namespace
 
 Result<void> InitProject(const InitOptions& opts, const CliContext& ctx) {
@@ -124,9 +342,9 @@ Result<void> InitProject(const InitOptions& opts, const CliContext& ctx) {
     if (!fs::is_regular_file(xexAbs))
       return Err<void>(ErrorCategory::IO, "--xex-path is not a regular file: " + xexAbs.string());
   } else if (xex_present && !fs::is_regular_file(xexAbs)) {
-    return Err<void>(ErrorCategory::IO,
-                     "Default entrypoint path exists but is not a regular file: " +
-                         xexAbs.string());
+    return Err<void>(
+        ErrorCategory::IO,
+        "Default entrypoint path exists but is not a regular file: " + xexAbs.string());
   }
 
   std::string xexStem = xexAbs.stem().string();
@@ -150,15 +368,26 @@ Result<void> InitProject(const InitOptions& opts, const CliContext& ctx) {
 
   fs::path xexRelToGame = fs::relative(xexAbs, gameRootAbs, ec);
   if (ec || xexRelToGame.empty() || *xexRelToGame.begin() == fs::path("..")) {
-    return Err<void>(ErrorCategory::Config, "Entrypoint XEX (" + xexAbs.string() +
-                                                ") is not inside the game root (" +
-                                                gameRootAbs.string() +
-                                                "); pass --xex-path for a custom layout");
+    return Err<void>(ErrorCategory::Config,
+                     "Entrypoint XEX (" + xexAbs.string() + ") is not inside the game root (" +
+                         gameRootAbs.string() + "); pass --xex-path for a custom layout");
   }
 
   std::string outDir = LowercaseAscii("generated/" + xexStem);
   std::string xexRelManifest = ManifestPath(xexAbs, projectRoot);
   std::string gameRootRelManifest = ManifestPath(gameRootAbs, projectRoot);
+
+  // Binaries that receive a config/<stem>.toml when --with-config is set.
+  // The includes strings go into the manifest; the files are written after
+  // the overwrite gate below.
+  std::vector<std::string> config_stems;
+  auto includes_for = [&](const std::string& stem) -> std::string {
+    if (!opts.with_config)
+      return "[]";
+    config_stems.push_back(stem);
+    return "[\"" + BinaryConfigRel(stem) + "\"]";
+  };
+  std::string entrypointIncludes = includes_for(ModuleStem(xexAbs));
 
   nlohmann::json modulesJson = nlohmann::json::array();
   if (opts.scan_dlls && scaffold_game_root) {
@@ -188,6 +417,7 @@ Result<void> InitProject(const InitOptions& opts, const CliContext& ctx) {
                                                                    names.snake_case)},
           {"file_path", ManifestPath(dllAbs, projectRoot)},
           {"out_directory_path", "generated/" + ModuleStem(dllAbs)},
+          {"includes", includes_for(ModuleStem(dllAbs))},
       });
     }
   }
@@ -206,6 +436,7 @@ Result<void> InitProject(const InitOptions& opts, const CliContext& ctx) {
       {"game_root", gameRootRelManifest},
       {"out_directory_path", outDir},
       {"entrypoint_out_dir", outDir},
+      {"entrypoint_includes", entrypointIncludes},
       {"modules", modulesJson},
   };
   std::string jsonStr = data.dump();
@@ -272,6 +503,11 @@ Result<void> InitProject(const InitOptions& opts, const CliContext& ctx) {
     }
   }
 
+  for (const auto& stem : config_stems) {
+    if (auto cfg = EnsureBinaryConfig(projectRoot, stem); !cfg)
+      return cfg;
+  }
+
   REXLOG_TRACE("Generating project files...");
   for (const auto& r : renders) {
     if (r.policy == RegeneratePolicy::FirstInitOnly && fs::exists(r.out)) {
@@ -294,37 +530,67 @@ Result<void> InitProject(const InitOptions& opts, const CliContext& ctx) {
 Result<void> InitModule(const InitModuleOptions& opts, const CliContext& ctx) {
   (void)ctx;
 
-  fs::path root = fs::absolute(opts.app_root);
-  std::error_code dir_ec;
-  fs::path manifestPath;
-  for (const auto& entry : fs::directory_iterator(root, dir_ec)) {
-    if (entry.path().extension() == ".toml" &&
-        rex::codegen::ManifestConfig::IsManifest(entry.path())) {
-      manifestPath = entry.path();
-      break;
-    }
-  }
-  if (dir_ec) {
-    return Err<void>(ErrorCategory::IO, fmt::format("Cannot read project root '{}': {}",
-                                                    root.string(), dir_ec.message()));
-  }
-  if (manifestPath.empty()) {
+  // --with-config on its own is a valid request: it covers the entrypoint and
+  // every module the manifest already lists, which is all a title with no DLLs
+  // needs.
+  const bool config_only = !opts.scan && opts.dll_path.empty();
+  if (config_only && !opts.with_config)
     return Err<void>(ErrorCategory::Config,
-                     "No manifest found in project root. Run 'rexglue init' first.");
+                     "Pass a DLL path, --scan to discover them, or --with-config to create "
+                     "configs for what the manifest already lists");
+  if (opts.scan && !opts.dll_path.empty())
+    return Err<void>(ErrorCategory::Config, "--scan does not take a DLL path");
+  if (opts.scan && !opts.guest_path.empty())
+    return Err<void>(ErrorCategory::Config, "--guest-path applies to a single DLL, not --scan");
+
+  auto located = LocateManifest(opts.manifest_path);
+  if (!located)
+    return Err<void>(located.error());
+  fs::path manifestPath = *located;
+
+  if (opts.with_config) {
+    if (auto restored = RestoreMissingConfigIncludes(manifestPath); !restored)
+      return restored;
   }
 
   auto manifest = rex::codegen::ManifestConfig::Load(manifestPath);
   if (!manifest)
-    return Err<void>(ErrorCategory::Config, "Failed to load manifest");
+    return Err<void>(ErrorCategory::Config, "Failed to load manifest: " + manifestPath.string());
+  const fs::path root = manifest->manifestDir;
 
-  fs::path xexAbs = fs::weakly_canonical(fs::absolute(opts.xex_path));
-  if (!fs::exists(xexAbs))
-    return Err<void>(ErrorCategory::IO, fmt::format("XEX file not found: {} (resolved from {})",
-                                                    xexAbs.string(), opts.xex_path));
-  std::string moduleName = ModuleStem(xexAbs);
-  std::string xexRel = fs::relative(xexAbs, root).generic_string();
-  std::string guestPath =
-      rex::codegen::CanonicalizeModuleGuestPath(opts.guest_path, manifest->projectName);
+  std::error_code ec;
+  fs::path gameRootAbs =
+      manifest->gameRoot
+          ? fs::weakly_canonical(root / *manifest->gameRoot, ec)
+          : fs::weakly_canonical(root / manifest->entrypoint.recompiler.filePath, ec).parent_path();
+  ec.clear();
+
+  std::vector<fs::path> dlls;
+  if (opts.scan) {
+    if (!fs::exists(gameRootAbs) || !fs::is_directory(gameRootAbs)) {
+      return Err<void>(ErrorCategory::IO,
+                       "Manifest game root is not a directory: " + gameRootAbs.string());
+    }
+    fs::recursive_directory_iterator it(gameRootAbs, fs::directory_options::skip_permission_denied,
+                                        ec);
+    fs::recursive_directory_iterator end;
+    for (; !ec && it != end; it.increment(ec)) {
+      if (!it->is_regular_file())
+        continue;
+      if (LowercaseAscii(it->path().extension().string()) != ".dll")
+        continue;
+      dlls.push_back(it->path());
+    }
+    std::sort(dlls.begin(), dlls.end());
+    if (dlls.empty())
+      REXLOG_INFO("No .dll files found under {}", gameRootAbs.string());
+  } else if (!config_only) {
+    fs::path dllAbs = fs::weakly_canonical(fs::absolute(opts.dll_path), ec);
+    ec.clear();
+    if (!fs::exists(dllAbs) || !fs::is_regular_file(dllAbs))
+      return Err<void>(ErrorCategory::IO, "DLL not found: " + opts.dll_path);
+    dlls.push_back(dllAbs);
+  }
 
   toml::table manifestTbl;
   try {
@@ -332,17 +598,72 @@ Result<void> InitModule(const InitModuleOptions& opts, const CliContext& ctx) {
   } catch (const toml::parse_error& err) {
     return Err<void>(ErrorCategory::Config, fmt::format("Manifest parse error: {}", err.what()));
   }
+  std::vector<std::pair<std::string, std::string>> existing;  // file_path, guest_path
   if (auto* modulesArr = manifestTbl["modules"].as_array()) {
     for (const auto& mod : *modulesArr) {
-      auto* modTbl = mod.as_table();
-      if (!modTbl)
-        continue;
-      if ((*modTbl)["file_path"].value_or<std::string>("") == xexRel ||
-          (*modTbl)["guest_path"].value_or<std::string>("") == guestPath) {
-        REXLOG_TRACE("Manifest already lists this module; nothing to do.");
-        return Ok();
+      if (auto* modTbl = mod.as_table()) {
+        existing.emplace_back((*modTbl)["file_path"].value_or<std::string>(""),
+                              (*modTbl)["guest_path"].value_or<std::string>(""));
       }
     }
+  }
+
+  std::string appended;
+  // Owned stem/guest-path pairs; KeyValueRow keys are string_views, so the
+  // display rows are built from this storage after the loop.
+  std::vector<std::pair<std::string, std::string>> added;
+  // Modules this run touched that the manifest already lists, so --with-config
+  // can backfill a config for them without adding a second entry. A standalone
+  // --with-config touches every listed module.
+  std::vector<std::string> already_listed;
+  if (config_only) {
+    for (const auto& [file_path, guest_path] : existing) {
+      if (!file_path.empty())
+        already_listed.push_back(file_path);
+    }
+  }
+  std::size_t skipped = 0;
+  for (const auto& dllAbs : dlls) {
+    fs::path relUnderGame = fs::relative(dllAbs, gameRootAbs, ec);
+    const bool under_game_root =
+        !ec && !relUnderGame.empty() && *relUnderGame.begin() != fs::path("..");
+    ec.clear();
+
+    std::string guestPath;
+    if (!opts.guest_path.empty()) {
+      guestPath = rex::codegen::CanonicalizeModuleGuestPath(opts.guest_path, manifest->projectName);
+    } else if (under_game_root) {
+      guestPath = rex::codegen::CanonicalizeModuleGuestPath(relUnderGame.generic_string(),
+                                                            manifest->projectName);
+    } else {
+      return Err<void>(ErrorCategory::Config,
+                       "DLL is outside the manifest game root (" + gameRootAbs.string() +
+                           "); pass --guest-path explicitly: " + dllAbs.string());
+    }
+
+    std::string fileRel = ManifestPath(dllAbs, root);
+    const auto match = std::find_if(existing.begin(), existing.end(), [&](const auto& e) {
+      return e.first == fileRel || e.second == guestPath;
+    });
+    if (match != existing.end()) {
+      ++skipped;
+      already_listed.push_back(match->first);
+      continue;
+    }
+    existing.emplace_back(fileRel, guestPath);
+
+    std::string stem = ModuleStem(dllAbs);
+    std::string includes = "[]";
+    if (opts.with_config) {
+      if (auto cfg = EnsureBinaryConfig(root, stem); !cfg)
+        return cfg;
+      includes = "[\"" + BinaryConfigRel(stem) + "\"]";
+    }
+    appended += fmt::format(
+        "\n[[modules]]\nguest_path = \"{}\"\nfile_path = \"{}\"\nout_directory_path = "
+        "\"generated/{}\"\nincludes = {}\n",
+        guestPath, fileRel, stem, includes);
+    added.emplace_back(std::move(stem), guestPath);
   }
 
   std::ifstream in(manifestPath);
@@ -354,12 +675,37 @@ Result<void> InitModule(const InitModuleOptions& opts, const CliContext& ctx) {
   std::string content = ss.str();
   in.close();
 
-  if (!content.empty() && content.back() != '\n')
-    content.push_back('\n');
-  content += fmt::format(
-      "\n[[modules]]\nguest_path = \"{}\"\nfile_path = \"{}\"\nout_directory_path = "
-      "\"generated/{}\"\nincludes = []\n",
-      guestPath, xexRel, moduleName);
+  bool wired = false;
+  if (opts.with_config) {
+    // The entrypoint gets a config too, so --with-config leaves every binary
+    // in the manifest covered regardless of which command created it.
+    const std::string entryStem = ModuleStem(manifest->entrypoint.recompiler.filePath);
+    if (!entryStem.empty()) {
+      if (auto cfg = EnsureBinaryConfig(root, entryStem); !cfg)
+        return cfg;
+      wired |= WireEntrypointConfig(content, BinaryConfigRel(entryStem));
+    }
+    for (const auto& fileRel : already_listed) {
+      const std::string stem = ModuleStem(fileRel);
+      if (auto cfg = EnsureBinaryConfig(root, stem); !cfg)
+        return cfg;
+      wired |= WireModuleConfig(content, fileRel, BinaryConfigRel(stem));
+    }
+  }
+
+  if (appended.empty() && !wired) {
+    if (config_only)
+      REXLOG_INFO("Every binary in {} already has a config.", manifestPath.filename().string());
+    else
+      REXLOG_INFO("Manifest already lists {} module(s); nothing to do.", skipped);
+    return Ok();
+  }
+
+  if (!appended.empty()) {
+    if (!content.empty() && content.back() != '\n')
+      content.push_back('\n');
+    content += appended;
+  }
 
   fs::path tmpPath = manifestPath;
   tmpPath += ".tmp";
@@ -375,7 +721,6 @@ Result<void> InitModule(const InitModuleOptions& opts, const CliContext& ctx) {
       return Err<void>(ErrorCategory::IO, "Failed while writing manifest tmp: " + tmpPath.string());
     }
   }
-  std::error_code ec;
   fs::rename(tmpPath, manifestPath, ec);
   if (ec) {
     std::error_code ignore;
@@ -384,24 +729,31 @@ Result<void> InitModule(const InitModuleOptions& opts, const CliContext& ctx) {
                      "Failed to rename manifest tmp into place: " + ec.message());
   }
 
-  std::vector<ui::KeyValueRow> rows;
-  rows.push_back({"file_path", xexRel});
-  rows.push_back({"guest_path", guestPath});
-  ui::KeyValueBlock(fmt::format("Module '{}' added to manifest:", moduleName), rows);
+  if (!added.empty()) {
+    std::vector<ui::KeyValueRow> rows;
+    rows.reserve(added.size());
+    for (const auto& [stem, guest] : added) {
+      rows.push_back({stem, guest});
+    }
+    ui::KeyValueBlock(
+        fmt::format("Added {} module(s) to {}:", rows.size(), manifestPath.filename().string()),
+        rows);
+  }
+  if (added.empty() && wired) {
+    REXLOG_INFO("Wired configs into {}", manifestPath.filename().string());
+  }
+  if (skipped > 0) {
+    REXLOG_INFO("{} module(s) already listed; skipped.", skipped);
+  }
   return Ok();
 }
 
 Result<void> InitAchievements(const InitAchievementsOptions& opts, const CliContext& /*ctx*/) {
   std::error_code ec;
-  fs::path manifestPath = fs::absolute(opts.manifest_path, ec);
-  if (ec || !fs::exists(manifestPath) || !fs::is_regular_file(manifestPath)) {
-    return Err<void>(ErrorCategory::IO, "Manifest not found: " + opts.manifest_path);
-  }
-  if (!rex::codegen::ManifestConfig::IsManifest(manifestPath)) {
-    return Err<void>(ErrorCategory::Config,
-                     "Not a project manifest (missing [project] section): " +
-                         manifestPath.string());
-  }
+  auto located = LocateManifest(opts.manifest_path);
+  if (!located)
+    return Err<void>(located.error());
+  fs::path manifestPath = *located;
   auto manifest = rex::codegen::ManifestConfig::Load(manifestPath);
   if (!manifest) {
     return Err<void>(ErrorCategory::Config, "Failed to load manifest: " + manifestPath.string());
@@ -606,12 +958,15 @@ struct InitArgs {
   std::string game_root;
   std::string template_dir;
   bool scan_dll = false;
+  bool with_config = false;
 };
 
 struct InitModuleArgs {
-  std::string app_root;
-  std::string xex_path;
+  std::string manifest_path;
+  std::string dll_path;
   std::string guest_path;
+  bool scan = false;
+  bool with_config = false;
 };
 
 struct InitAchievementsArgs {
@@ -628,7 +983,8 @@ void RegisterInit(CLI::App& parent, const CliContext& ctx, DeferredAction& pendi
   init->add_option("--project-name", args->project_name,
                    "Project name (becomes [project].name in the manifest)")
       ->type_name("NAME");
-  init->add_option("--xex-path", args->xex_path, "Path to entrypoint XEX (e.g. assets/Default.xex)")
+  init->add_option("--xex-path", args->xex_path,
+                   "Path to entrypoint XEX (default: assets/default.xex under the project root)")
       ->type_name("PATH");
   init->add_option("--game-root", args->game_root, "Game asset root for DLL guest-path derivation")
       ->type_name("PATH");
@@ -637,21 +993,28 @@ void RegisterInit(CLI::App& parent, const CliContext& ctx, DeferredAction& pendi
       ->type_name("PATH");
   init->add_flag("--scan-dll", args->scan_dll,
                  "Scan --game-root for .dll files and add each as a [[modules]] entry");
+  init->add_flag("--with-config", args->with_config,
+                 "Create config/<binary>.toml for the entrypoint and each scanned module, "
+                 "wired into the manifest's includes");
   init->add_option("--template-dir", args->template_dir, "Custom template directory for overrides")
       ->type_name("PATH");
 
-  auto* mod =
-      init->add_subcommand("module", "Add a DLL module to an existing project")->fallthrough();
+  auto* mod = init->add_subcommand("module", "Add DLL modules to an existing project manifest")
+                  ->fallthrough();
   auto modArgs = std::make_shared<InitModuleArgs>();
-  mod->add_option("--project-root", modArgs->app_root, "Project root containing the manifest")
-      ->type_name("PATH")
-      ->required();
-  mod->add_option("--xex-path", modArgs->xex_path, "Path to the DLL XEX")
-      ->type_name("PATH")
-      ->required();
-  mod->add_option("--guest-path", modArgs->guest_path, "Guest path for XexLoadImage matching")
-      ->type_name("PATH")
-      ->required();
+  mod->add_option("dll", modArgs->dll_path, "Path to the DLL XEX to add (omit with --scan)")
+      ->type_name("PATH");
+  mod->add_option("--manifest", modArgs->manifest_path,
+                  "Project manifest TOML (auto-discovered in cwd if omitted)")
+      ->type_name("PATH");
+  mod->add_option("--guest-path", modArgs->guest_path,
+                  "Guest path for XexLoadImage matching (derived from the game root when omitted)")
+      ->type_name("PATH");
+  mod->add_flag("--scan", modArgs->scan,
+                "Discover .dll files under the manifest's game root and add missing entries");
+  mod->add_flag("--with-config", modArgs->with_config,
+                "Create config/<binary>.toml for the entrypoint and each module, wired into "
+                "its includes; usable on its own to cover what the manifest already lists");
 
   init->callback([args, &ctx, &pending]() {
     if (pending)
@@ -663,6 +1026,7 @@ void RegisterInit(CLI::App& parent, const CliContext& ctx, DeferredAction& pendi
       opts.xex_path = args->xex_path;
       opts.game_root = args->game_root;
       opts.scan_dlls = args->scan_dll;
+      opts.with_config = args->with_config;
       opts.template_dir = args->template_dir;
       opts.force = ctx.overwrite_existing;
       return InitProject(opts, ctx);
@@ -671,9 +1035,11 @@ void RegisterInit(CLI::App& parent, const CliContext& ctx, DeferredAction& pendi
   mod->callback([modArgs, &ctx, &pending]() {
     pending = [modArgs, &ctx]() -> Result<void> {
       InitModuleOptions opts;
-      opts.app_root = modArgs->app_root;
-      opts.xex_path = modArgs->xex_path;
+      opts.manifest_path = modArgs->manifest_path;
+      opts.dll_path = modArgs->dll_path;
       opts.guest_path = modArgs->guest_path;
+      opts.scan = modArgs->scan;
+      opts.with_config = modArgs->with_config;
       return InitModule(opts, ctx);
     };
   });
@@ -684,8 +1050,8 @@ void RegisterInit(CLI::App& parent, const CliContext& ctx, DeferredAction& pendi
                   ->fallthrough();
   auto achArgs = std::make_shared<InitAchievementsArgs>();
   ach->add_option("manifest", achArgs->manifest_path,
-                  "Path to the project manifest TOML (its [entrypoint] locates the XEX)")
-      ->required();
+                  "Project manifest TOML whose [entrypoint] locates the XEX "
+                  "(auto-discovered in cwd if omitted)");
   ach->add_option("output_dir", achArgs->output_dir,
                   "Output directory for achievements.toml (default: XEX directory)");
   ach->add_option("--language", achArgs->language,

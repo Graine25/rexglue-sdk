@@ -29,14 +29,17 @@ struct InitOptions {
   std::string game_root;
   std::string project_root;
   bool scan_dlls = false;
+  bool with_config = false;
   std::string template_dir;
   bool force = false;
 };
 
 struct InitModuleOptions {
-  std::string app_root;
-  std::string xex_path;
-  std::string guest_path;
+  std::string manifest_path;  // Empty: discover in cwd.
+  std::string dll_path;       // Single DLL to add; empty with scan.
+  std::string guest_path;     // Empty: derive from the game root.
+  bool scan = false;
+  bool with_config = false;
 };
 
 struct InitAchievementsOptions {
