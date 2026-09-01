@@ -28,7 +28,7 @@
 namespace rex::system {
 
 // Bump on any change to InputCreateInfo or to the IInputSystem interface.
-inline constexpr uint32_t kInputPluginAbiVersion = 1;
+inline constexpr uint32_t kInputPluginAbiVersion = 2;
 
 inline constexpr const char* kInputCreateSymbol = "rex_input_create";
 inline constexpr const char* kInputAbiVersionSymbol = "rex_input_abi_version";
@@ -36,6 +36,7 @@ inline constexpr const char* kInputAbiVersionSymbol = "rex_input_abi_version";
 struct InputCreateInfo {
   uint32_t struct_size = 0;  // sizeof(InputCreateInfo), set by the host
   bool tool_mode = false;    // no window, so only the NOP driver is wanted
+  InputAssignmentPolicy assignment = InputAssignmentPolicy::kPerUser;
 };
 
 // extern "C" exports every input plugin must provide:
@@ -46,6 +47,8 @@ using InputAbiVersionFn = uint32_t (*)();
 using InputCreateFn = IInputSystem* (*)(uint32_t abi_version, const InputCreateInfo* info);
 
 // Plugin Loader
-std::unique_ptr<IInputSystem> LoadInputPlugin(std::string_view name, bool tool_mode);
+std::unique_ptr<IInputSystem> LoadInputPlugin(
+    std::string_view name, bool tool_mode,
+    InputAssignmentPolicy assignment = InputAssignmentPolicy::kPerUser);
 
 }  // namespace rex::system

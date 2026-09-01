@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <functional>
 
 #include <rex/input/input.h>
@@ -21,6 +22,15 @@ class Window;
 }
 
 namespace rex::system {
+
+/// How physical devices map onto guest user indices.
+enum class InputAssignmentPolicy : uint32_t {
+  /// Device ordinal N feeds guest user N. Synthetic devices feed user 0.
+  kPerUser = 0,
+  /// Every device feeds guest user 0, for single-player titles that only ever
+  /// poll that user. Users 1 and up report not connected.
+  kShared = 1,
+};
 
 /// Everything the host calls on an input system. The implementation lives in
 /// a runtime-loaded plugin, so this is an ABI boundary: adding or reordering
@@ -45,6 +55,11 @@ class IInputSystem {
 
   virtual void AddUIInputBlocker() = 0;
   virtual void RemoveUIInputBlocker() = 0;
+
+  /// Gates keyboard/mouse look. A title that owns the pointer for its own
+  /// menus turns this off so the camera does not track the cursor, and so the
+  /// pointer is not captured while a menu is up.
+  virtual void SetMouseLookActive(bool active) = 0;
 };
 
 }  // namespace rex::system

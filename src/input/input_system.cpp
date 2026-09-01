@@ -342,6 +342,10 @@ void InputSystem::RemoveUIInputBlocker() {
   ui_input_blockers_.fetch_sub(1);
 }
 
+void InputSystem::SetMouseLookActive(bool active) {
+  mnk::SetMouseLookActive(active);
+}
+
 bool InputSystem::GetVibrationEnabled() const {
   return REXCVAR_GET(vibration);
 }

@@ -9,6 +9,9 @@
  *              See LICENSE file in the project root for full license text.
  */
 
+#include <memory>
+
+#include <rex/input/device_assignment.h>
 #include <rex/input/input_system.h>
 #include <rex/logging.h>
 #include <rex/system/input_plugin.h>
@@ -29,5 +32,9 @@ extern "C" REX_INPUT_PLUGIN_EXPORT rex::system::IInputSystem* rex_input_create(
     return nullptr;
   }
 
-  return rex::input::CreateDefaultInputSystem(info->tool_mode).release();
+  auto input = rex::input::CreateDefaultInputSystem(info->tool_mode);
+  if (input && info->assignment == rex::system::InputAssignmentPolicy::kShared) {
+    input->SetDeviceAssignment(std::make_unique<rex::input::SharedAssignment>());
+  }
+  return input.release();
 }

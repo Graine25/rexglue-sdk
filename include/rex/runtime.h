@@ -69,6 +69,7 @@ struct RuntimeConfig {
   std::function<std::unique_ptr<system::IAudioSystem>(runtime::FunctionDispatcher*)> audio_factory;
   std::function<std::unique_ptr<system::IInputSystem>(bool tool_mode)> input_factory;
   std::string input_plugin;
+  system::InputAssignmentPolicy input_assignment = system::InputAssignmentPolicy::kPerUser;
   std::function<void(Runtime*, system::KernelState*)> kernel_init;
   bool tool_mode = false;
 };

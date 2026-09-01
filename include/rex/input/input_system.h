@@ -60,6 +60,7 @@ class InputSystem : public system::IInputSystem {
   /// that dismissed the dialog does not also reach the game.
   void AddUIInputBlocker() override;
   void RemoveUIInputBlocker() override;
+  void SetMouseLookActive(bool active) override;
 
   bool GetVibrationEnabled() const;
   void ToggleVibration();

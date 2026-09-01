@@ -54,7 +54,8 @@ std::vector<platform::DynamicLibrary>& LoadedPlugins() {
 
 }  // namespace
 
-std::unique_ptr<IInputSystem> LoadInputPlugin(std::string_view name, bool tool_mode) {
+std::unique_ptr<IInputSystem> LoadInputPlugin(std::string_view name, bool tool_mode,
+                                              InputAssignmentPolicy assignment) {
   auto path = rex::filesystem::GetExecutableFolder() / PluginFileName(name);
   if (!std::filesystem::exists(path)) {
     REXSYS_ERROR(
@@ -88,6 +89,7 @@ std::unique_ptr<IInputSystem> LoadInputPlugin(std::string_view name, bool tool_m
   InputCreateInfo info{};
   info.struct_size = sizeof(InputCreateInfo);
   info.tool_mode = tool_mode;
+  info.assignment = assignment;
 
   IInputSystem* input_system = create_fn(kInputPluginAbiVersion, &info);
   if (!input_system) {

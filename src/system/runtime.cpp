@@ -135,7 +135,8 @@ X_STATUS Runtime::Setup(RuntimeConfig config) {
   // Initialize input from injected config, or from the named plugin.
   if (config.input_factory || !config.input_plugin.empty()) {
     input_system_ = config.input_factory ? config.input_factory(tool_mode_)
-                                         : system::LoadInputPlugin(config.input_plugin, tool_mode_);
+                                         : system::LoadInputPlugin(config.input_plugin, tool_mode_,
+                                                                   config.input_assignment);
     if (input_system_) {
       X_STATUS input_status = input_system_->Setup();
       if (XFAILED(input_status)) {
