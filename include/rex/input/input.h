@@ -15,6 +15,11 @@
 
 namespace rex::input {
 
+// XInput's published thresholds.
+constexpr int32_t X_INPUT_GAMEPAD_LEFT_THUMB_DEADZONE = 7849;
+constexpr int32_t X_INPUT_GAMEPAD_RIGHT_THUMB_DEADZONE = 8689;
+constexpr uint8_t X_INPUT_GAMEPAD_TRIGGER_THRESHOLD = 30;
+
 enum X_INPUT_CAPS {
   X_INPUT_CAPS_FFB_SUPPORTED = 0x0001,
   X_INPUT_CAPS_WIRELESS = 0x0002,
