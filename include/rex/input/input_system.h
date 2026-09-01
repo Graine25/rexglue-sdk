@@ -40,24 +40,26 @@ class InputSystem : public system::IInputSystem {
   void Shutdown() override;
 
   void AddDriver(std::unique_ptr<InputDriver> driver);
-  void AttachWindow(rex::ui::Window* window);
-  void SetActiveCallback(std::function<bool()> callback);
+  void AttachWindow(rex::ui::Window* window) override;
+  void SetActiveCallback(std::function<bool()> callback) override;
 
   /// Replaces any previous assignment. Call before the guest starts polling.
   void SetDeviceAssignment(std::unique_ptr<DeviceAssignment> assignment);
 
-  X_RESULT GetCapabilities(uint32_t user_index, uint32_t flags, X_INPUT_CAPABILITIES* out_caps);
-  X_RESULT GetState(uint32_t user_index, X_INPUT_STATE* out_state);
+  X_RESULT GetCapabilities(uint32_t user_index, uint32_t flags,
+                           X_INPUT_CAPABILITIES* out_caps) override;
+  X_RESULT GetState(uint32_t user_index, X_INPUT_STATE* out_state) override;
   /// GetState for the emulator's own UI, which reads while the guest is blocked.
   X_RESULT GetStateForUI(uint32_t user_index, X_INPUT_STATE* out_state);
-  X_RESULT SetState(uint32_t user_index, X_INPUT_VIBRATION* vibration);
-  X_RESULT GetKeystroke(uint32_t user_index, uint32_t flags, X_INPUT_KEYSTROKE* out_keystroke);
+  X_RESULT SetState(uint32_t user_index, X_INPUT_VIBRATION* vibration) override;
+  X_RESULT GetKeystroke(uint32_t user_index, uint32_t flags,
+                        X_INPUT_KEYSTROKE* out_keystroke) override;
 
   /// While any blocker is held the guest reads a neutral pad. Buttons still
   /// held when the last one drops stay masked until released, so the press
   /// that dismissed the dialog does not also reach the game.
-  void AddUIInputBlocker();
-  void RemoveUIInputBlocker();
+  void AddUIInputBlocker() override;
+  void RemoveUIInputBlocker() override;
 
   bool GetVibrationEnabled() const;
   void ToggleVibration();

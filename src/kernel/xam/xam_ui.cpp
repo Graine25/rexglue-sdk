@@ -21,7 +21,6 @@ REXCVAR_DEFINE_BOOL(headless, false, "Kernel",
                     "Don't display any UI, using defaults for prompts as needed");
 #include <rex/kernel/xam/private.h>
 #include <rex/hook.h>
-#include <rex/input/input_system.h>
 #include <rex/types.h>
 #include <rex/system/xtypes.h>
 #include <rex/thread.h>
@@ -63,8 +62,7 @@ class ScopedGuestInputBlock {
  public:
   ScopedGuestInputBlock() {
     auto* runtime = REX_KERNEL_STATE()->emulator();
-    input_system_ =
-        runtime ? static_cast<rex::input::InputSystem*>(runtime->input_system()) : nullptr;
+    input_system_ = runtime ? runtime->input_system() : nullptr;
     if (input_system_) {
       input_system_->AddUIInputBlocker();
     }
@@ -79,7 +77,7 @@ class ScopedGuestInputBlock {
   ScopedGuestInputBlock& operator=(const ScopedGuestInputBlock&) = delete;
 
  private:
-  rex::input::InputSystem* input_system_ = nullptr;
+  rex::system::IInputSystem* input_system_ = nullptr;
 };
 
 }  // namespace
