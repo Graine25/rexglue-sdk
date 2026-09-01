@@ -23,9 +23,6 @@
 #include <rex/logging.h>
 #include <rex/ui/virtual_key.h>
 
-REXCVAR_DEFINE_STRING(hid_mappings_file, "gamecontrollerdb.txt", "Input",
-                      "Path to SDL gamecontroller mappings file");
-
 namespace rex::input::sdl {
 
 namespace {

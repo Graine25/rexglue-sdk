@@ -26,19 +26,6 @@
 #include <rex/logging.h>
 #include <rex/system/kernel_state.h>
 
-REXCVAR_DEFINE_STRING(input_backend, "sdl", "Input", "Input backend: sdl, xinput")
-    .allowed({"sdl", "xinput"});
-
-REXCVAR_DEFINE_BOOL(guide_button, false, "Input", "Enable guide button pass-through");
-
-REXCVAR_DEFINE_BOOL(vibration, true, "Input", "Enable controller vibration");
-
-REXCVAR_DEFINE_DOUBLE(left_stick_deadzone_percentage, 0.0, "Input",
-                      "Deadzone applied to the left stick, as a fraction of its range")
-    .range(0.0, 1.0);
-REXCVAR_DEFINE_DOUBLE(right_stick_deadzone_percentage, 0.0, "Input",
-                      "Deadzone applied to the right stick, as a fraction of its range")
-    .range(0.0, 1.0);
 namespace rex::input {
 
 namespace {
