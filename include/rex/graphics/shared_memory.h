@@ -29,6 +29,13 @@ class SharedMemory {
   // ReXGlue: marks every page as not valid on the host (GraphicsSystem::InvalidateGpuMemory).
   void InvalidateAllPages();
 
+  // ReXGlue: guest physical address to host pointer for callers outside the
+  // SharedMemory hierarchy (texture replacement hashing and dumping).
+  template <typename T = const uint8_t*>
+  T TranslatePhysical(uint32_t guest_address) const {
+    return memory().TranslatePhysical<T>(guest_address);
+  }
+
   typedef void (*GlobalWatchCallback)(const global_unique_lock_type& global_lock, void* context,
                                       uint32_t address_first, uint32_t address_last,
                                       bool invalidated_by_gpu);

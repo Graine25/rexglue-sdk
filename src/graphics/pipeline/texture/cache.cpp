@@ -12,8 +12,10 @@
 #include <rex/chrono/clock.h>
 #include <rex/cvar.h>
 #include <rex/dbg.h>
+#include <rex/filesystem.h>
 #include <rex/graphics/flags.h>
 #include <rex/graphics/pipeline/texture/cache.h>
+#include <rex/graphics/pipeline/texture/replacement.h>
 #include <rex/graphics/shared_memory.h>
 #include <rex/logging.h>
 #include <rex/math.h>
@@ -71,7 +73,28 @@ REXCVAR_DEFINE_BOOL(tiled_shared_memory, true, "GPU.Debug",
                     "Enable tiled/sparse resources for efficient large address space "
                     "support. Disable for graphics debugger compatibility.");
 
+REXCVAR_DEFINE_BOOL(texture_dump_enabled, false, "GPU/Texture Replacement",
+                    "Dump all decoded textures to disk as DDS files for replacement authoring")
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
+
+REXCVAR_DEFINE_BOOL(texture_replace_enabled, false, "GPU/Texture Replacement",
+                    "Inject replacement textures from disk when available")
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
+
+REXCVAR_DEFINE_STRING(texture_folder, "", "GPU/Texture Replacement",
+                      "Override the textures folder used for dump/replace "
+                      "(empty = <executable folder>/textures)")
+    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+
 namespace rex::graphics {
+
+static std::filesystem::path GetTextureReplacementFolder() {
+  const std::string configured_texture_folder = REXCVAR_GET(texture_folder);
+  if (!configured_texture_folder.empty()) {
+    return rex::to_path(configured_texture_folder);
+  }
+  return rex::filesystem::GetExecutableFolder() / "textures";
+}
 
 const TextureCache::LoadShaderInfo TextureCache::load_shader_info_[kLoadShaderCount] = {
     {1, 4},   // k8bpb
@@ -133,6 +156,22 @@ TextureCache::TextureCache(const RegisterFile& register_file, SharedMemory& shar
     std::memset(scaled_resolve_pages_l2_, 0, sizeof(scaled_resolve_pages_l2_));
     scaled_resolve_global_watch_handle_ =
         shared_memory.RegisterGlobalWatch(ScaledResolveGlobalWatchCallbackThunk, this);
+  }
+
+  // Initialise the replacement pipeline in the configured textures folder:
+  //   <texture_folder>/dump/     - dumped DDS files written here
+  //   <texture_folder>/replace/  - replacement files read from here
+  InitTextureReplacement(GetTextureReplacementFolder());
+}
+
+void TextureCache::InitTextureReplacement(const std::filesystem::path& textures_dir) {
+  replacement_ = std::make_unique<TextureReplacement>(textures_dir);
+}
+
+void TextureCache::RescanTextureReplacements() {
+  if (replacement_) {
+    replacement_->Rescan();
+    base_page_hash_cache_.clear();
   }
 }
 
@@ -589,6 +628,7 @@ void TextureCache::Texture::WatchCallback(
   } else {
     assert_not_zero(GetGuestBaseSize());
     base_outdated_ = true;
+    texture_cache_.InvalidateHashCache(key().base_page);
     base_watch_handle_ = nullptr;
   }
 }
@@ -704,7 +744,58 @@ TextureCache::Texture* TextureCache::FindOrCreateTexture(TextureKey key) {
     get_host_extent(host_width, host_height, host_depth_or_array_size);
   }
 
-  // Try to find an existing texture.
+  // Replacement injection: if a replacement exists for this texture's content
+  // hash, override the key dimensions and retain the pixels for upload.
+  // This must happen BEFORE textures_.find so we look up and return the
+  // already-mutated key entry on subsequent calls (avoiding duplicate textures).
+  const TextureReplacementData* repl = nullptr;
+  texture_util::TextureGuestLayout original_guest_layout{};
+  bool has_replacement = false;
+  uint64_t replacement_content_hash = 0;
+  if (replacement_ && REXCVAR_GET(texture_replace_enabled) && key.base_page != 0 &&
+      !key.scaled_resolve) {
+    const uint32_t guest_addr = key.base_page << 12;
+    // Capture the original guest layout BEFORE mutating the key.
+    original_guest_layout = key.GetGuestLayout();
+    const uint32_t guest_size = original_guest_layout.base.level_data_extent_bytes;
+    if (guest_size > 0) {
+      // Use cached hash if available - only rehash when guest memory changed.
+      auto hash_it = base_page_hash_cache_.find(key.base_page);
+      if (hash_it != base_page_hash_cache_.end()) {
+        replacement_content_hash = hash_it->second;
+      } else {
+        const uint8_t* guest_bytes = shared_memory().TranslatePhysical(guest_addr);
+        replacement_content_hash = TextureReplacement::HashGuestData(guest_bytes, guest_size);
+        base_page_hash_cache_.emplace(uint32_t(key.base_page), replacement_content_hash);
+      }
+      repl = replacement_->FindReplacement(replacement_content_hash);
+      if (repl) {
+        // Clamp to the host backend's maximum texture size.
+        const uint32_t max_wh = GetMaxHostTextureWidthHeight(key.dimension);
+        if (repl->width <= max_wh && repl->height <= max_wh && repl->width > 0 &&
+            repl->height > 0) {
+          const uint32_t orig_w = key.GetWidth();
+          const uint32_t orig_h = key.GetHeight();
+          key.width_minus_1 = repl->width - 1;
+          key.height_minus_1 = repl->height - 1;
+          // Force a plain RGBA8 host format so the upload impl can copy the
+          // RGBA8 replacement pixels directly without needing a BC encoder.
+          key.format = xenos::TextureFormat::k_8_8_8_8;
+          // Replacements are single-mip.
+          key.mip_max_level = 0;
+          has_replacement = true;
+          REXGPU_DEBUG(
+              "TextureReplacement: injecting {}x{} replacement for "
+              "original {}x{} (hash {:016x})",
+              repl->width, repl->height, orig_w, orig_h, replacement_content_hash);
+        } else {
+          repl = nullptr;  // out of bounds - don't attach
+        }
+      }
+    }
+  }
+
+  // Try to find an existing texture using the (possibly mutated) key.
   // TODO(Triang3l): Reuse a texture with mip_page unchanged, but base_page
   // previously 0, now not 0, to save memory - common case in streaming.
   auto found_texture_it = textures_.find(key);
@@ -721,6 +812,15 @@ TextureCache::Texture* TextureCache::FindOrCreateTexture(TextureKey key) {
       return nullptr;
     }
     assert_true(new_texture->key() == key);
+    // Store the hash so the load path can look up the replacement pointer
+    // directly from the cache - no pixel data is owned by the Texture.
+    if (has_replacement) {
+      new_texture->replacement_content_hash_ = replacement_content_hash;
+      // Restore the original guest layout so that MakeUpToDateAndWatch and
+      // shared-memory watch registration use the real guest memory extents,
+      // not the extents computed from the mutated (RGBA8, replacement-sized) key.
+      new_texture->OverrideGuestLayout(original_guest_layout);
+    }
     texture = textures_.emplace(key, std::move(new_texture)).first->second.get();
   }
   COUNT_profile_set("gpu/texture_cache/textures", textures_.size());
@@ -888,8 +988,8 @@ void TextureCache::LoadTexturesData(Texture** textures, uint32_t n_textures) {
     }
 
     // Actually load the texture data.
-    if (!LoadTextureDataFromResidentMemoryImpl(texture, (index_base_outdated & (1ULL << i)) != 0,
-                                               (index_mips_outdated & (1ULL << i)) != 0)) {
+    if (!LoadTextureDataFromMemoryOrReplacement(texture, (index_base_outdated & (1ULL << i)) != 0,
+                                                (index_mips_outdated & (1ULL << i)) != 0)) {
       continue;
     }
 
@@ -916,6 +1016,38 @@ void TextureCache::LoadTexturesData(Texture** textures, uint32_t n_textures) {
     }
   }
 }
+bool TextureCache::LoadTextureDataFromMemoryOrReplacement(Texture& texture, bool load_base,
+                                                          bool load_mips) {
+  const TextureKey& texture_key = texture.key();
+
+  // If a replacement was attached, look it up directly from the cache
+  // (const pointer - no copy) and upload; fall back to guest memory on failure.
+  const TextureReplacementData* replacement =
+      (texture.replacement_content_hash_ != 0 && replacement_)
+          ? replacement_->FindReplacement(texture.replacement_content_hash_)
+          : nullptr;
+  if (!(replacement && LoadTextureDataFromReplacementImpl(texture, *replacement))) {
+    if (!LoadTextureDataFromResidentMemoryImpl(texture, load_base, load_mips)) {
+      return false;
+    }
+  }
+
+  // Texture dump: write the guest bytes to disk so replacement authors can
+  // identify and recreate textures. Base mip level only.
+  if (replacement_ && load_base && REXCVAR_GET(texture_dump_enabled)) {
+    const uint32_t guest_addr = texture_key.base_page << 12;
+    const uint32_t guest_size = texture.GetGuestBaseSize();
+    if (guest_size > 0) {
+      const uint8_t* guest_bytes = shared_memory().TranslatePhysical(guest_addr);
+      const uint64_t content_hash = TextureReplacement::HashGuestData(guest_bytes, guest_size);
+      replacement_->DumpTexture(content_hash, texture_key.GetWidth(), texture_key.GetHeight(),
+                                texture_key.pitch, texture_key.tiled != 0, texture_key.format,
+                                texture_key.endianness, guest_bytes, guest_size);
+    }
+  }
+  return true;
+}
+
 bool TextureCache::LoadTextureData(Texture& texture) {
   // Lockless pre-check: if texture appears up-to-date, skip the lock.
   // This is safe because worst case is a false positive (we acquire lock
@@ -979,7 +1111,7 @@ bool TextureCache::LoadTextureData(Texture& texture) {
   }
 
   // Actually load the texture data.
-  if (!LoadTextureDataFromResidentMemoryImpl(texture, base_outdated, mips_outdated)) {
+  if (!LoadTextureDataFromMemoryOrReplacement(texture, base_outdated, mips_outdated)) {
     return false;
   }
 
