@@ -29,6 +29,10 @@ REXCVAR_DECLARE(bool, half_pixel_offset);
 
 REXCVAR_DECLARE(std::string, occlusion_query);
 
+REXCVAR_DECLARE(bool, viz_query);
+
+REXCVAR_DECLARE(bool, viz_query_log);
+
 REXCVAR_DECLARE(int32_t, occlusion_query_fake_lower_threshold);
 
 REXCVAR_DECLARE(int32_t, occlusion_query_fake_upper_threshold);

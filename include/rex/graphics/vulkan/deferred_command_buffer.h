@@ -147,6 +147,19 @@ class DeferredCommandBuffer {
     args.flags = flags;
   }
 
+  void CmdVkBeginConditionalRenderingEXT(VkBuffer buffer, VkDeviceSize offset,
+                                         VkConditionalRenderingFlagsEXT flags) {
+    auto& args = *reinterpret_cast<ArgsVkBeginConditionalRenderingEXT*>(WriteCommand(
+        Command::kVkBeginConditionalRenderingEXT, sizeof(ArgsVkBeginConditionalRenderingEXT)));
+    args.buffer = buffer;
+    args.offset = offset;
+    args.flags = flags;
+  }
+
+  void CmdVkEndConditionalRenderingEXT() {
+    WriteCommand(Command::kVkEndConditionalRenderingEXT, 0);
+  }
+
   void CmdVkResetQueryPool(VkQueryPool query_pool, uint32_t first_query, uint32_t query_count) {
     auto& args = *reinterpret_cast<ArgsVkResetQueryPool*>(
         WriteCommand(Command::kVkResetQueryPool, sizeof(ArgsVkResetQueryPool)));
@@ -391,6 +404,8 @@ class DeferredCommandBuffer {
     kVkEndQuery,
     kVkCopyQueryPoolResults,
     kVkResetQueryPool,
+    kVkBeginConditionalRenderingEXT,
+    kVkEndConditionalRenderingEXT,
     kVkClearAttachments,
     kVkClearColorImage,
     kVkCopyBuffer,
@@ -477,6 +492,12 @@ class DeferredCommandBuffer {
     VkDeviceSize dst_offset;
     VkDeviceSize stride;
     VkQueryResultFlags flags;
+  };
+
+  struct ArgsVkBeginConditionalRenderingEXT {
+    VkBuffer buffer;
+    VkDeviceSize offset;
+    VkConditionalRenderingFlagsEXT flags;
   };
 
   struct ArgsVkResetQueryPool {

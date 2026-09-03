@@ -36,15 +36,16 @@ class DeferredCommandBuffer;
 // VK_QUERY_RESULT_WAIT_BIT in the copy removes the need for a separate
 // availability check. Transfer barrier before InvalidateReadback covers non-
 // coherent memory.
-class VulkanZPDQueryPool {
+class VulkanOcclusionQueryPool {
  public:
-  VulkanZPDQueryPool() = default;
-  VulkanZPDQueryPool(const VulkanZPDQueryPool&) = delete;
-  VulkanZPDQueryPool& operator=(const VulkanZPDQueryPool&) = delete;
-  ~VulkanZPDQueryPool() { Shutdown(); }
+  // ZPD needs precise sample counts; VIZ only needs zero vs nonzero.
+  explicit VulkanOcclusionQueryPool(bool precise_queries) : precise_queries_(precise_queries) {}
+  VulkanOcclusionQueryPool(const VulkanOcclusionQueryPool&) = delete;
+  VulkanOcclusionQueryPool& operator=(const VulkanOcclusionQueryPool&) = delete;
+  ~VulkanOcclusionQueryPool() { Shutdown(); }
 
   bool EnsureInitialized(const ui::vulkan::VulkanDevice* vulkan_device, uint32_t requested_capacity,
-                         bool can_recreate, bool initialize_fsi_counter = false);
+                         bool can_recreate, bool initialize_fsi_counter);
   void Shutdown();
 
   bool fbo_initialized() const {
@@ -66,6 +67,10 @@ class VulkanZPDQueryPool {
 
   VkBuffer fsi_counter_buffer() const { return fsi_counter_buffer_; }
 
+  // Raw handle for a caller that records vkCmdCopyQueryPoolResults.
+  // VIZ stages a single query result into its predicate buffer this way.
+  VkQueryPool query_pool() const { return query_pool_; }
+
   bool has_free_indices() const { return !free_indices_.empty(); }
 
   bool AcquireQueryIndex(uint32_t& query_index, uint32_t& query_generation);
@@ -74,15 +79,17 @@ class VulkanZPDQueryPool {
 
   void BeginQuery(DeferredCommandBuffer& deferred_command_buffer, uint32_t query_index) const;
   void EndQuery(DeferredCommandBuffer& deferred_command_buffer, uint32_t query_index) const;
-  void QueueQueryResolve(uint32_t query_index, bool uses_fsi_counter = false);
+  void QueueQueryResolve(uint32_t query_index, bool uses_fsi_counter);
   void ClearFSICounter(DeferredCommandBuffer& deferred_command_buffer, uint32_t query_index) const;
   void RecordResolveBatch(VkCommandBuffer command_buffer);
 
   void InvalidateReadback();
 
-  uint64_t GetQueryReadbackValue(uint32_t query_index, bool uses_fsi_counter = false) const;
+  uint64_t GetQueryReadbackValue(uint32_t query_index, bool uses_fsi_counter) const;
 
  private:
+  const bool precise_queries_ = true;
+
   const ui::vulkan::VulkanDevice* vulkan_device_ = nullptr;
 
   VkQueryPool query_pool_ = VK_NULL_HANDLE;

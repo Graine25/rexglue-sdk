@@ -12,16 +12,16 @@
 #include <algorithm>
 
 #include <rex/graphics/d3d12/deferred_command_list.h>
-#include <rex/graphics/d3d12/zpd_query_pool.h>
+#include <rex/graphics/d3d12/occlusion_query_pool.h>
 #include <rex/logging.h>
 #include <rex/ui/d3d12/d3d12_provider.h>
 #include <rex/ui/d3d12/d3d12_util.h>
 
 namespace rex::graphics::d3d12 {
 
-bool D3D12ZPDQueryPool::EnsureInitialized(const ui::d3d12::D3D12Provider& provider,
-                                          uint32_t requested_capacity, bool can_recreate,
-                                          bool initialize_rov_counter) {
+bool D3D12OcclusionQueryPool::EnsureInitialized(const ui::d3d12::D3D12Provider& provider,
+                                                uint32_t requested_capacity, bool can_recreate,
+                                                bool initialize_rov_counter) {
   if (rtv_initialized() && (!initialize_rov_counter || rov_initialized()) &&
       (capacity_ == requested_capacity || !can_recreate)) {
     return true;
@@ -48,8 +48,8 @@ bool D3D12ZPDQueryPool::EnsureInitialized(const ui::d3d12::D3D12Provider& provid
 
     if (FAILED(device->CreateQueryHeap(&heap_desc, IID_PPV_ARGS(&query_heap_)))) {
       REXGPU_WARN(
-          "D3D12ZPDQueryPool: Failed to create the ZPD query "
-          "heap, falling back to fake sample counts.");
+          "D3D12OcclusionQueryPool: Failed to create the query heap, falling "
+          "back to fake sample counts.");
       return false;
     }
 
@@ -62,8 +62,8 @@ bool D3D12ZPDQueryPool::EnsureInitialized(const ui::d3d12::D3D12Provider& provid
                                                D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
                                                IID_PPV_ARGS(&readback_buffer_)))) {
       REXGPU_WARN(
-          "D3D12ZPDQueryPool: Failed to allocate the ZPD query "
-          "readback buffer, falling back to fake sample counts.");
+          "D3D12OcclusionQueryPool: Failed to allocate the readback buffer, "
+          "falling back to fake sample counts.");
       Shutdown();
       return false;
     }
@@ -75,8 +75,8 @@ bool D3D12ZPDQueryPool::EnsureInitialized(const ui::d3d12::D3D12Provider& provid
     void* mapping = nullptr;
     if (FAILED(readback_buffer_->Map(0, &read_range, &mapping))) {
       REXGPU_WARN(
-          "D3D12ZPDQueryPool: Failed to map the ZPD query "
-          "readback buffer, falling back to fake sample counts.");
+          "D3D12OcclusionQueryPool: Failed to map the readback buffer, "
+          "falling back to fake sample counts.");
       Shutdown();
       return false;
     }
@@ -121,7 +121,7 @@ bool D3D12ZPDQueryPool::EnsureInitialized(const ui::d3d12::D3D12Provider& provid
           &counter_buffer_desc, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr,
           IID_PPV_ARGS(&rov_counter_buffer_)))) {
     REXGPU_WARN(
-        "D3D12ZPDQueryPool: Failed to create the ZPD ROV counter "
+        "D3D12OcclusionQueryPool: Failed to create the ZPD ROV counter "
         "buffer, falling back to fake sample counts.");
     return false;
   }
@@ -134,8 +134,8 @@ bool D3D12ZPDQueryPool::EnsureInitialized(const ui::d3d12::D3D12Provider& provid
           &readback_buffer_desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
           IID_PPV_ARGS(&rov_counter_readback_buffer_)))) {
     REXGPU_WARN(
-        "D3D12ZPDQueryPool: Failed to create the ZPD ROV counter readback "
-        "buffer, falling back to fake sample counts.");
+        "D3D12OcclusionQueryPool: Failed to create the ZPD ROV counter "
+        "readback buffer, falling back to fake sample counts.");
     rov_counter_buffer_.Reset();
     return false;
   }
@@ -147,7 +147,7 @@ bool D3D12ZPDQueryPool::EnsureInitialized(const ui::d3d12::D3D12Provider& provid
   void* mapping = nullptr;
   if (FAILED(rov_counter_readback_buffer_->Map(0, &read_range, &mapping))) {
     REXGPU_WARN(
-        "D3D12ZPDQueryPool: Failed to map the ZPD ROV counter readback "
+        "D3D12OcclusionQueryPool: Failed to map the ZPD ROV counter readback "
         "buffer, falling back to fake sample counts.");
     rov_counter_readback_buffer_.Reset();
     rov_counter_buffer_.Reset();
@@ -158,7 +158,7 @@ bool D3D12ZPDQueryPool::EnsureInitialized(const ui::d3d12::D3D12Provider& provid
   return true;
 }
 
-void D3D12ZPDQueryPool::Shutdown() {
+void D3D12OcclusionQueryPool::Shutdown() {
   resolve_batch_pending_.clear();
   resolve_batch_indices_.clear();
   resolve_batch_ranges_.clear();
@@ -189,7 +189,7 @@ void D3D12ZPDQueryPool::Shutdown() {
   rov_counter_buffer_.Reset();
 }
 
-bool D3D12ZPDQueryPool::AcquireQueryIndex(uint32_t& query_index, uint32_t& query_generation) {
+bool D3D12OcclusionQueryPool::AcquireQueryIndex(uint32_t& query_index, uint32_t& query_generation) {
   if (free_indices_.empty()) {
     query_index = UINT32_MAX;
     query_generation = 0;
@@ -206,7 +206,7 @@ bool D3D12ZPDQueryPool::AcquireQueryIndex(uint32_t& query_index, uint32_t& query
   return true;
 }
 
-void D3D12ZPDQueryPool::ReleaseQueryIndex(uint32_t query_index, uint32_t query_generation) {
+void D3D12OcclusionQueryPool::ReleaseQueryIndex(uint32_t query_index, uint32_t query_generation) {
   if (query_index >= capacity_) {
     return;
   }
@@ -220,30 +220,31 @@ void D3D12ZPDQueryPool::ReleaseQueryIndex(uint32_t query_index, uint32_t query_g
   free_indices_.push_back(query_index);
 }
 
-bool D3D12ZPDQueryPool::GenerationMatches(uint32_t query_index, uint32_t query_generation) const {
+bool D3D12OcclusionQueryPool::GenerationMatches(uint32_t query_index,
+                                                uint32_t query_generation) const {
   return query_index < index_generations_.size() &&
          index_generations_[query_index] == query_generation;
 }
 
-void D3D12ZPDQueryPool::BeginQuery(DeferredCommandList& deferred_command_list,
-                                   uint32_t query_index) const {
+void D3D12OcclusionQueryPool::BeginQuery(DeferredCommandList& deferred_command_list,
+                                         uint32_t query_index) const {
   if (!query_heap_ || query_index >= capacity_) {
     return;
   }
 
-  deferred_command_list.D3DBeginQuery(query_heap_.Get(), D3D12_QUERY_TYPE_OCCLUSION, query_index);
+  deferred_command_list.D3DBeginQuery(query_heap_.Get(), query_type_, query_index);
 }
 
-void D3D12ZPDQueryPool::EndQuery(DeferredCommandList& deferred_command_list,
-                                 uint32_t query_index) const {
+void D3D12OcclusionQueryPool::EndQuery(DeferredCommandList& deferred_command_list,
+                                       uint32_t query_index) const {
   if (!query_heap_ || query_index >= capacity_) {
     return;
   }
 
-  deferred_command_list.D3DEndQuery(query_heap_.Get(), D3D12_QUERY_TYPE_OCCLUSION, query_index);
+  deferred_command_list.D3DEndQuery(query_heap_.Get(), query_type_, query_index);
 }
 
-void D3D12ZPDQueryPool::QueueQueryResolve(uint32_t query_index, bool uses_rov_counter) {
+void D3D12OcclusionQueryPool::QueueQueryResolve(uint32_t query_index, bool uses_rov_counter) {
   if (query_index >= capacity_) {
     return;
   }
@@ -264,8 +265,8 @@ void D3D12ZPDQueryPool::QueueQueryResolve(uint32_t query_index, bool uses_rov_co
   }
 }
 
-void D3D12ZPDQueryPool::ClearROVCounter(DeferredCommandList& deferred_command_list,
-                                        uint32_t query_index) const {
+void D3D12OcclusionQueryPool::ClearROVCounter(DeferredCommandList& deferred_command_list,
+                                              uint32_t query_index) const {
   if (!rov_initialized() || query_index >= capacity_) {
     return;
   }
@@ -291,8 +292,8 @@ void D3D12ZPDQueryPool::ClearROVCounter(DeferredCommandList& deferred_command_li
   deferred_command_list.D3DResourceBarrier(1, &uav_barrier);
 }
 
-void D3D12ZPDQueryPool::FlushResolveBatch(DeferredCommandList& deferred_command_list,
-                                          bool submission_open) {
+void D3D12OcclusionQueryPool::FlushResolveBatch(DeferredCommandList& deferred_command_list,
+                                                bool submission_open) {
   if (!submission_open ||
       (resolve_batch_indices_.empty() && rov_counter_resolve_batch_indices_.empty())) {
     return;
@@ -337,8 +338,8 @@ void D3D12ZPDQueryPool::FlushResolveBatch(DeferredCommandList& deferred_command_
     } else {
       build_ranges(resolve_batch_indices_, resolve_batch_pending_);
       for (const ResolveRange& range : resolve_batch_ranges_) {
-        deferred_command_list.D3DResolveQueryData(query_heap_.Get(), D3D12_QUERY_TYPE_OCCLUSION,
-                                                  range.start, range.count, readback_buffer_.Get(),
+        deferred_command_list.D3DResolveQueryData(query_heap_.Get(), query_type_, range.start,
+                                                  range.count, readback_buffer_.Get(),
                                                   range.start * sizeof(uint64_t));
       }
     }
@@ -381,8 +382,8 @@ void D3D12ZPDQueryPool::FlushResolveBatch(DeferredCommandList& deferred_command_
   deferred_command_list.D3DResourceBarrier(1, &barrier);
 }
 
-uint64_t D3D12ZPDQueryPool::GetQueryReadbackValue(uint32_t query_index,
-                                                  bool uses_rov_counter) const {
+uint64_t D3D12OcclusionQueryPool::GetQueryReadbackValue(uint32_t query_index,
+                                                        bool uses_rov_counter) const {
   if (query_index >= capacity_) {
     return 0;
   }
