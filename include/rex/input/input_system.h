@@ -47,6 +47,11 @@ class InputSystem : public system::IInputSystem {
   X_RESULT SetState(uint32_t user_index, X_INPUT_VIBRATION* vibration);
   X_RESULT GetKeystroke(uint32_t user_index, uint32_t flags, X_INPUT_KEYSTROKE* out_keystroke);
 
+  /// The device a guest user is playing on: the one whose input was seen last,
+  /// else the first assigned. False when none is assigned. What a game reads
+  /// to draw the pad in hand (its name and GUID carry the vendor and product).
+  bool ActiveDevice(uint32_t user_index, DeviceInfo* out_info);
+
  private:
   /// Re-enumerates every driver and notifies the assignment when the set
   /// changed.
