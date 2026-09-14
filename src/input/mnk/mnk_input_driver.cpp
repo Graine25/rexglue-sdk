@@ -634,9 +634,10 @@ void MnkInputDriver::OnKeyDown(rex::ui::KeyEvent& e) {
   SetKeyState(vk, true);
 }
 
+// Releases are tracked even while disabled: the key that switched mnk_mode
+// off is still down when the switch lands, and its release would otherwise
+// be dropped, leaving it held for good once the mode comes back.
 void MnkInputDriver::OnKeyUp(rex::ui::KeyEvent& e) {
-  if (!IsEnabled())
-    return;
   std::lock_guard lock(state_mutex_);
   uint16_t vk = static_cast<uint16_t>(e.virtual_key());
   SetKeyState(vk, false);
@@ -662,8 +663,6 @@ void MnkInputDriver::OnMouseDown(rex::ui::MouseEvent& e) {
 }
 
 void MnkInputDriver::OnMouseUp(rex::ui::MouseEvent& e) {
-  if (!IsEnabled())
-    return;
   std::lock_guard lock(state_mutex_);
   switch (e.button()) {
     case rex::ui::MouseEvent::Button::kLeft:
