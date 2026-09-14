@@ -368,8 +368,9 @@ u32 GetFileAttributesA_entry(mapped_string lpFileName) {
   return entry->attributes();
 }
 
-u32 GetFileAttributesExA_entry(u32 fInfoLevelId, mapped_string lpFileName,
+u32 GetFileAttributesExA_entry(mapped_string lpFileName, u32 fInfoLevelId,
                                mapped_void lpFileInformation) {
+  (void)fInfoLevelId;
   const char* path = static_cast<const char*>(lpFileName);
   auto* entry = REX_KERNEL_FS()->ResolvePath(path);
   if (!entry) {
