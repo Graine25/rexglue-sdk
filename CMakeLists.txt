@@ -139,6 +139,10 @@ add_compile_options(
     -fno-char8_t
 )
 
+if(NOT MSVC AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+    add_compile_options(-msse4.1)
+endif()
+
 # Platform detection (supports AMD64 and ARM64)
 set(REX_TARGET_PROCESSOR "${CMAKE_SYSTEM_PROCESSOR}")
 if(APPLE AND CMAKE_OSX_ARCHITECTURES)
