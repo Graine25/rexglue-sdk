@@ -76,4 +76,11 @@ class InputSystem : public system::IInputSystem {
 /// In tool mode, only the NOP driver is added.
 std::unique_ptr<InputSystem> CreateDefaultInputSystem(bool tool_mode);
 
+/// Whether controllers keep being read while another window has the focus:
+/// SDL's joystick background events, set on the runtime's own SDL -- the one
+/// the controller driver runs on. An app that links SDL itself has a copy of
+/// its own, and a hint set there never reaches the driver. Takes effect at
+/// once, and may be called before the drivers start.
+void SetControllerBackgroundInput(bool allow);
+
 }  // namespace rex::input
