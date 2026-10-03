@@ -141,8 +141,9 @@ u32 xeXamContentCreate(u32 user_index, mapped_string root_name, mapped_void cont
     *disposition_ptr = 0;
   }
 
-  auto run = [content_manager, xuid, root_name = root_name.value(), flags, content_data,
-              disposition_ptr,
+  // Copied: the caller's buffer can be gone before a deferred create runs.
+  auto run = [content_manager, xuid, root_name = std::string(root_name.value()), flags,
+              content_data, disposition_ptr,
               license_mask_ptr](uint32_t& extended_error, uint32_t& length) -> X_RESULT {
     X_RESULT result = X_ERROR_INVALID_PARAMETER;
     kDispositionState disposition = kDispositionState::Unknown;
