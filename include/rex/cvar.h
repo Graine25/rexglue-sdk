@@ -173,6 +173,8 @@ struct FlagEntry {
   std::string default_value;
   bool is_debug_only = false;
   Source source = Source::kDefault;
+  // The config file's value, written back for an entry a launch overrode.
+  std::optional<std::string> config_value;
 };
 
 std::vector<FlagEntry>& GetRegistry();
