@@ -336,9 +336,10 @@ void XmaDecoder::WriteRegister(uint32_t addr, uint32_t value) {
       }
     }
   } else {
-    // 0601h (1804h) is written to with 0x02000000 and 0x03000000 around a lock
-    // operation
     switch (r) {
+      case 0x0601:
+        // 0601h (1804h) is written around a lock operation; nothing to model.
+        break;
       default: {
         const auto register_info = register_file_.GetRegisterInfo(r);
         if (register_info) {
@@ -349,7 +350,6 @@ void XmaDecoder::WriteRegister(uint32_t addr, uint32_t value) {
         }
         break;
       }
-#pragma warning(suppress : 4065)
     }
   }
 }
