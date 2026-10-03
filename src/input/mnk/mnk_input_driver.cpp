@@ -725,9 +725,8 @@ void MnkInputDriver::OnKeyDown(rex::ui::KeyEvent& e) {
   RefreshBoundKeystrokesLocked();
 }
 
+// Releases are tracked while disabled, or a key held across a mode switch sticks.
 void MnkInputDriver::OnKeyUp(rex::ui::KeyEvent& e) {
-  if (!IsEnabled())
-    return;
   std::lock_guard lock(state_mutex_);
   if (IsPassthroughEnabled()) {
     EnqueueRawKeystroke(e, false);
@@ -777,8 +776,6 @@ void MnkInputDriver::OnMouseDown(rex::ui::MouseEvent& e) {
 }
 
 void MnkInputDriver::OnMouseUp(rex::ui::MouseEvent& e) {
-  if (!IsEnabled())
-    return;
   std::lock_guard lock(state_mutex_);
   switch (e.button()) {
     case rex::ui::MouseEvent::Button::kLeft:
