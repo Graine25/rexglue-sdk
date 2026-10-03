@@ -216,6 +216,10 @@ if(REXGLUE_USE_VULKAN)
         set(MVK_BUILD_SHADER_CONVERTER_TOOL OFF CACHE BOOL "" FORCE)
         set(MVK_EXCLUDE_SPIRV_TOOLS ON CACHE BOOL "" FORCE)
         add_subdirectory(moltenvk)
+
+        # volk opens these by their ecosystem names, so no per-config postfix.
+        set_target_properties(vulkan MoltenVK PROPERTIES
+            DEBUG_POSTFIX "" RELWITHDEBINFO_POSTFIX "")
     endif()
 endif()
 
