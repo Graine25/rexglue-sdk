@@ -301,6 +301,8 @@ else()
     # This sets REXGLUE_SHARE_DIR and makes rexglue_configure_target() available.
     set(REXGLUE_SHARE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/ui" PARENT_SCOPE)
     set(REXGLUE_SHARE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/ui")
+    # The macOS Vulkan staging reads it from the consumer's scope.
+    set(REXGLUE_ROOT "${REXGLUE_ROOT}" PARENT_SCOPE)
     include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/rexglue_helpers.cmake)
     foreach(target IN LISTS REXGLUE_INSTALL_TARGETS REXGLUE_INSTALL_FIDELITYFX_TARGETS)
         get_target_property(export_name ${target} EXPORT_NAME)
